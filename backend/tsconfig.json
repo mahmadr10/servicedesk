@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    /* Modern JS output, since we're running on a recent Node version */
+    "target": "ES2022",
+    "module": "Node16",
+    "lib": ["ES2022"],
+
+    /* Where compiled JS goes, where our TS source lives */
+    "outDir": "dist",
+    "rootDir": "src",
+
+    /* Makes TypeScript actually strict — catches bugs like "this could be undefined" */
+    "strict": true,
+
+    /* Lets us import CommonJS packages (like express) with `import express from "express"` syntax */
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    /* How TypeScript finds imported files — "node16" matches our CommonJS setup */
+    "moduleResolution": "node16",
+    "resolveJsonModule": true
+  },
+  "include": ["src"]
+}
