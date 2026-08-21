@@ -3,14 +3,14 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// Validate environment variables ONCE at startup, using the same Zod library
-// we use for request validation. If something required is missing (e.g. you
-// forgot to set JWT_SECRET), we want the app to fail immediately with a clear
-// message — not crash mysteriously later when a route tries to use it.
 const envSchema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.string().default("4000"),
   MONGODB_URI: z.string().min(1, "MONGODB_URI is required — check your .env file"),
-  JWT_SECRET: z.string().min(1, "JWT_SECRET is required — check your .env file"),
+  // Separate secrets for access vs refresh tokens: if one ever leaked, the
+  // other token type stays safe — they're independently rotatable.
+  JWT_ACCESS_SECRET: z.string().min(1, "JWT_ACCESS_SECRET is required — check your .env file"),
+  JWT_REFRESH_COOKIE_NAME: z.string().default("refreshToken"),
   FRONTEND_ORIGIN: z.string().default("http://localhost:5173"),
 });
 
@@ -23,3 +23,4 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data;
+export const isProduction = env.NODE_ENV === "production";

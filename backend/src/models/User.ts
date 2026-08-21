@@ -1,7 +1,7 @@
 import { Schema, model, Document, Types } from "mongoose";
 import bcrypt from "bcryptjs";
 
-export type UserRole = "CUSTOMER" | "AGENT";
+export type UserRole = "CUSTOMER" | "AGENT" | "ADMIN";
 
 export interface IUser extends Document {
   _id: Types.ObjectId;
@@ -9,6 +9,7 @@ export interface IUser extends Document {
   email: string;
   passwordHash: string;
   role: UserRole;
+  isActive: boolean;
   comparePassword(candidate: string): Promise<boolean>;
 }
 
@@ -17,21 +18,19 @@ const userSchema = new Schema<IUser>(
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     passwordHash: { type: String, required: true },
-    role: { type: String, enum: ["CUSTOMER", "AGENT"], required: true },
+    role: { type: String, enum: ["CUSTOMER", "AGENT", "ADMIN"], required: true },
+    // Lets an admin deactivate an account (e.g. an agent who left) without
+    // deleting their history — deactivated users can't log in, but their
+    // name still shows correctly on old tickets/comments/audit entries.
+    isActive: { type: Boolean, default: true },
   },
-  { timestamps: true } // adds createdAt / updatedAt automatically
+  { timestamps: true }
 );
 
-// Mongoose "instance method" — every User document loaded from the database
-// gets this method. It compares a plain-text password (from a login form)
-// against the stored hash. We never store or compare plain-text passwords.
 userSchema.methods.comparePassword = function (candidate: string) {
   return bcrypt.compare(candidate, this.passwordHash);
 };
 
-// Never send passwordHash to the frontend, even by accident — this runs
-// automatically whenever a User document is converted to JSON (e.g. in a
-// res.json(user) call).
 userSchema.set("toJSON", {
   transform: (_doc, ret: any) => {
     delete ret.passwordHash;

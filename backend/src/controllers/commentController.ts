@@ -2,7 +2,12 @@ import { Request, Response } from "express";
 import * as commentService from "../services/commentService";
 
 export async function addComment(req: Request, res: Response) {
-  const comment = await commentService.addComment(req.params.id as string, req.user!, req.body.text);
+  const comment = await commentService.addComment(
+    req.params.id as string,
+    req.user!,
+    req.body.text,
+    req.body.isInternal
+  );
   res.status(201).json({ success: true, data: { comment } });
 }
 

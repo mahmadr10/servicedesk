@@ -25,8 +25,18 @@ export function validate(schema: ZodType, part: RequestPart = "body") {
       throw new AppError(400, "VALIDATION_ERROR", message);
     }
 
-    // Replace with the parsed data (Zod can coerce/transform, e.g. string -> number)
-    (req as any)[part] = result.data;
+    // Express 5 made `req.query` a getter-only property (no setter) — you
+    // can no longer do `req.query = newObject`, it throws. `req.body` and
+    // `req.params` are still plain writable properties, so only `query`
+    // needs the "clear and refill the existing object" workaround; for the
+    // others, a straight reassignment is simpler and works fine.
+    if (part === "query") {
+      const target = req.query as Record<string, unknown>;
+      for (const key of Object.keys(target)) delete target[key];
+      Object.assign(target, result.data as Record<string, unknown>);
+    } else {
+      (req as any)[part] = result.data;
+    }
     next();
   };
 }

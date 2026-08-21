@@ -1,15 +1,10 @@
 import { Request, Response, NextFunction } from "express";
-import { verifyToken } from "../utils/jwt";
+import { verifyAccessToken } from "../utils/jwt";
 import { AppError } from "../utils/AppError";
 import { UserRole } from "../models/User";
 
-// "Middleware" — a function that runs BEFORE the route handler, like a
-// security guard checking ID before you're let into a room. This one reads
-// the JWT from the Authorization header, checks it's valid, and attaches
-// the decoded { userId, role } to req.user so every later handler knows
-// who's asking.
 export function requireAuth(req: Request, _res: Response, next: NextFunction) {
-  const header = req.headers.authorization; // expected format: "Bearer <token>"
+  const header = req.headers.authorization;
 
   if (!header || !header.startsWith("Bearer ")) {
     throw new AppError(401, "UNAUTHORIZED", "Missing or malformed Authorization header.");
@@ -18,18 +13,20 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   const token = header.slice("Bearer ".length);
 
   try {
-    req.user = verifyToken(token);
+    // Note: this only checks the JWT's signature and expiry, not whether
+    // the user has been deactivated since the token was issued (that would
+    // need a DB read on every single request, which defeats the point of a
+    // stateless access token). Worst case, a deactivated user's *existing*
+    // access token stays valid for up to 15 minutes — an accepted trade-off
+    // given how short-lived access tokens are; /auth/refresh DOES check
+    // isActive, so it's revoked within one refresh cycle at most.
+    req.user = verifyAccessToken(token);
     next();
   } catch {
     throw new AppError(401, "UNAUTHORIZED", "Invalid or expired token.");
   }
 }
 
-// Role-based authorization — separate from authentication on purpose.
-// requireAuth answers "who are you?", requireRole answers "are you allowed
-// to do THIS?". Enforced here on the server, not just hidden in the UI,
-// because a customer could otherwise call the agent-only API directly with
-// a tool like curl and bypass any button we hide in the frontend.
 export function requireRole(...roles: UserRole[]) {
   return (req: Request, _res: Response, next: NextFunction) => {
     if (!req.user || !roles.includes(req.user.role)) {

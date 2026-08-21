@@ -3,39 +3,50 @@ import * as ticketController from "../controllers/ticketController";
 import * as commentController from "../controllers/commentController";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { validate } from "../middleware/validate";
+import { upload } from "../middleware/upload";
 import {
   createTicketSchema,
   listTicketsQuerySchema,
   updateStatusSchema,
+  updatePrioritySchema,
+  updateTagsSchema,
+  reassignSchema,
   mongoIdParamSchema,
 } from "../validators/ticketValidators";
 import { createCommentSchema } from "../validators/commentValidators";
 
 const router = Router();
 
-// Every ticket route requires SOME logged-in user; specific routes further
-// restrict by role below. This two-layer check (requireAuth then
-// requireRole) mirrors the two questions "who are you?" / "are you allowed?"
 router.use(requireAuth);
 
-// Only customers create tickets (per spec: agents don't file tickets).
 router.post("/", requireRole("CUSTOMER"), validate(createTicketSchema), ticketController.createTicket);
-
-// Both roles can list — the service itself restricts customers to their own tickets.
 router.get("/", validate(listTicketsQuerySchema, "query"), ticketController.listTickets);
-
 router.get("/:id", validate(mongoIdParamSchema, "params"), ticketController.getTicket);
 
-// Only agents change ticket status.
 router.patch(
   "/:id/status",
-  requireRole("AGENT"),
+  requireRole("CUSTOMER", "AGENT", "ADMIN"), // customers can trigger the CLOSED/reopen transitions; the service enforces which ones
   validate(mongoIdParamSchema, "params"),
   validate(updateStatusSchema),
   ticketController.updateStatus
 );
 
-// Only agents assign tickets to themselves.
+router.patch(
+  "/:id/priority",
+  requireRole("AGENT", "ADMIN"),
+  validate(mongoIdParamSchema, "params"),
+  validate(updatePrioritySchema),
+  ticketController.updatePriority
+);
+
+router.patch(
+  "/:id/tags",
+  requireRole("AGENT", "ADMIN"),
+  validate(mongoIdParamSchema, "params"),
+  validate(updateTagsSchema),
+  ticketController.updateTags
+);
+
 router.post(
   "/:id/assign",
   requireRole("AGENT"),
@@ -43,8 +54,26 @@ router.post(
   ticketController.assignToSelf
 );
 
-// Comments are a sub-resource of a ticket. Both customer and agent can post,
-// as long as they're allowed to see the ticket (checked in the service).
+router.post(
+  "/:id/reassign",
+  requireRole("ADMIN"),
+  validate(mongoIdParamSchema, "params"),
+  validate(reassignSchema),
+  ticketController.reassign
+);
+
+router.post(
+  "/:id/attachments",
+  validate(mongoIdParamSchema, "params"),
+  upload.single("file"),
+  ticketController.uploadAttachment
+);
+router.get(
+  "/:id/attachments/:attachmentId",
+  validate(mongoIdParamSchema, "params"),
+  ticketController.downloadAttachment
+);
+
 router.get("/:id/comments", validate(mongoIdParamSchema, "params"), commentController.listComments);
 router.post(
   "/:id/comments",
