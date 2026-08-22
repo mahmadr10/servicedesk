@@ -1,111 +1,157 @@
 # ServiceDesk
 
-A small support-ticket system. Customers create tickets; agents triage,
-assign, and resolve them, with live status updates pushed to the customer's
-browser. Built as a 2-day scoped learning project.
+A production-grade multi-user support ticket platform. Customers submit
+requests; support agents triage, assign, and resolve them under SLA
+deadlines; administrators manage users, categories, SLA policies, and can
+inspect a full audit trail. Real-time updates push status/assignment
+changes to everyone watching a ticket, without a page refresh.
+
+**Full documentation:**
+
+| Doc | Covers |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System/component diagrams, data model, request lifecycle, auth flow |
+| [API.md](API.md) | Every endpoint, request/response shapes, error codes |
+| [SECURITY.md](SECURITY.md) | Auth model, threat mitigations, what's deliberately out of scope |
+| [TESTING.md](TESTING.md) | Test strategy and how to run each layer |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Docker, CI/CD, and deploying to a live host |
+| [DECISIONS.md](DECISIONS.md) | Why MongoDB, why JWT, why Socket.IO, etc. — alternatives considered |
+| [BUILD_LOG.md](BUILD_LOG.md) | Feature-by-feature build log: problem → approach → challenges → result |
 
 ## What was built
 
-- **Auth**: register/login with JWT (access token only), roles `CUSTOMER` and `AGENT`, enforced server-side.
-- **Tickets**: create, list (filter by status + pagination), get one, update status, assign to self — all going through a strict state machine (see below).
-- **Comments**: customers and agents can both comment on a ticket.
-- **Real-time**: Socket.IO pushes a `ticket:updated` event to a customer the instant an agent changes their ticket's status or assigns it — no page refresh needed.
-- **Validation**: every request body/params/query is checked with Zod before it reaches business logic.
-- **Centralized error handling**: every error response is `{ success: false, error: { code, message } }` — no raw stack traces ever reach the client.
-- **Architecture**: routes → controllers → services → models. Controllers are thin; all business logic (including the state machine) lives in the service layer, where it's directly unit-testable.
-- **Tests**: Vitest tests for the ticket state machine logic (`backend/src/services/ticketService.test.ts`) — the highest-value place to test, since the whole app depends on this rule being correct.
-
-## The ticket state machine
-
-```
-OPEN → TRIAGED → ASSIGNED → IN_PROGRESS → RESOLVED → CLOSED
-```
-
-Only the single next step is ever legal — no skipping ahead, no going
-backwards, enforced in `ticketService.isLegalTransition()`. An illegal
-attempt (e.g. OPEN straight to RESOLVED) returns:
-
-```json
-{ "success": false, "error": { "code": "INVALID_STATUS_TRANSITION", "message": "..." } }
-```
-
-"Assign to self" is the specific action that moves a ticket from `TRIAGED`
-to `ASSIGNED` (that's why `ASSIGNED` sits right after `TRIAGED` in the
-chain) — so a ticket must be triaged before an agent can pick it up.
+- **Auth**: register/login, short-lived JWT access tokens + rotating
+  httpOnly-cookie refresh tokens, logout revokes the refresh token
+  server-side.
+- **Roles**: Customer, Agent, Administrator — enforced at the API layer via
+  middleware, not just hidden in the UI.
+- **Tickets**: full CRUD, search, filter (status/priority/category/agent/tag/
+  date range), sort, and server-side pagination. Attachments (Multer,
+  type/size-restricted). Tags. A human-readable ticket number (`TCK-000123`).
+- **State machine**: a branching, role-aware workflow —
+  `OPEN → TRIAGED → ASSIGNED → IN_PROGRESS ⇄ WAITING_FOR_CUSTOMER`,
+  `IN_PROGRESS → RESOLVED → CLOSED`, with `CLOSED → OPEN` reopening. Illegal
+  transitions return a structured `INVALID_STATUS_TRANSITION` error, never a
+  silent no-op.
+- **SLA engine**: per-priority response/resolution deadlines, computed at
+  ticket creation from admin-configurable policies; live "remaining time" /
+  breach status, computed on every read (never stored stale).
+- **Audit log**: every mutating action (create, status change, priority
+  change, assignment, comment, category/SLA-policy edits) recorded with
+  actor/action/entity/entityId/oldValue/newValue/timestamp — inspectable by
+  admins.
+- **Dashboard & analytics**: totals, SLA breach count, average resolution
+  time, and bar charts (tickets by status/priority/category/agent), backed
+  by MongoDB aggregation pipelines.
+- **Real-time**: Socket.IO, JWT-authenticated at connection time. A
+  customer's own ticket updates live; agents/admins share a room so
+  reassignment is visible without a refresh.
+- **Validation**: Zod on every request body/params/query, both ends.
+- **Security**: password hashing (bcrypt), rate limiting, Helmet security
+  headers, centralized error handling (no stack traces to the client),
+  file-upload restrictions. Details in [SECURITY.md](SECURITY.md).
+- **Observability**: structured JSON logging (Pino) with request ids,
+  method/route/status/duration/userId on every request; errors correlate to
+  logs via a `requestId` in the response.
+- **Testing**: Vitest unit tests (state machine, SLA math), Supertest
+  integration tests (real HTTP against a real in-memory MongoDB), and a
+  Playwright E2E suite driving a real browser through the full ticket
+  lifecycle. See [TESTING.md](TESTING.md).
+- **CI**: GitHub Actions — install → lint → typecheck → test → build, on
+  every PR and push to `main`.
+- **Docker**: Dockerfiles for both halves + a `docker-compose.yml` that runs
+  the whole stack (including a local MongoDB) with one command.
 
 ## Project structure
 
 ```
-backend/    Node + Express + TypeScript API server
-frontend/   React + TypeScript + Vite web app
+backend/    Node + Express + TypeScript API (controller -> service -> repository -> model)
+frontend/   React + TypeScript + Vite, TanStack Query + React Hook Form
+e2e/        Playwright end-to-end tests (drives both halves together)
 ```
-
-Two separate programs — run each in its own terminal.
 
 ## Running it locally
 
-### 1. MongoDB Atlas
-
-You need a free MongoDB Atlas cluster and its connection string:
-
-1. Sign up / log in at https://cloud.mongodb.com
-2. Create a free (M0) cluster.
-3. Under **Database Access**, create a database user (username + password).
-4. Under **Network Access**, allow your current IP (or `0.0.0.0/0` for this demo — not for production).
-5. Click **Connect → Drivers**, copy the connection string, and replace `<password>` with your database user's password.
-
-### 2. Backend
+### Option A — Docker (one command)
 
 ```bash
+docker compose up
+```
+
+Frontend: http://localhost:8080 · Backend: http://localhost:4000 · a local
+MongoDB is included, no Atlas account needed. Override any setting via a
+root `.env` — see [.env.example](.env.example).
+
+> Note: this was written and typechecked/reviewed carefully but not run
+> end-to-end in this environment (Docker wasn't available where this was
+> built) — do a `docker compose up` verification pass before relying on it.
+
+### Option B — run each half directly
+
+**1. MongoDB Atlas** (or any MongoDB instance): create a free cluster at
+https://cloud.mongodb.com, get its connection string. Steps in
+[DEPLOYMENT.md](DEPLOYMENT.md#mongodb-atlas-setup).
+
+**2. Backend:**
+```bash
 cd backend
-cp .env.example .env   # then paste your real MONGODB_URI and set a JWT_SECRET
+cp .env.example .env   # paste your MONGODB_URI, set a JWT_ACCESS_SECRET
 npm install
 npm run dev
 ```
+Runs on http://localhost:4000. First boot auto-seeds default categories and
+SLA policies. Optionally seed demo accounts: `npm run seed:users`.
 
-Server runs on http://localhost:4000 (health check: `/api/health`).
-
-### 3. Frontend
-
+**3. Frontend:**
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
+Runs on http://localhost:5173.
 
-Vite prints the local URL (usually http://localhost:5173).
+**4. Try it:** register a Customer and an Agent (two browser profiles or one
+incognito). Customer creates a ticket → Agent triages, assigns to self,
+progresses it → both sides watch it update live → Customer closes it.
 
-### 4. Try it
+## Environment variables
 
-1. Register a **Customer** account and a separate **Agent** account (two browser tabs / one incognito).
-2. As the customer: create a ticket.
-3. As the agent: open the Ticket Queue, move the ticket `OPEN → TRIAGED`, then **Assign to me**.
-4. Watch the customer's ticket view — it updates live, no refresh.
-5. Continue moving the ticket through `IN_PROGRESS → RESOLVED → CLOSED` as the agent.
-
-## Environment variables (backend/.env)
-
-| Variable        | Meaning                                                    |
-|-----------------|-------------------------------------------------------------|
-| PORT            | Port the API server listens on (default 4000)                |
-| MONGODB_URI     | MongoDB Atlas connection string                              |
-| JWT_SECRET      | Secret key used to sign login tokens — any long random string |
-| FRONTEND_ORIGIN | The frontend's URL, for CORS (default http://localhost:5173)  |
+See `backend/.env.example`, `frontend/.env.example`, and root
+`.env.example` (Docker overrides). Full reference in
+[DEPLOYMENT.md](DEPLOYMENT.md#environment-variables).
 
 ## Running tests
 
 ```bash
-cd backend
-npm test
+cd backend  && npm test    # unit + integration (Vitest + Supertest, in-memory MongoDB)
+cd e2e      && npm test    # Playwright E2E (starts both servers itself)
 ```
+
+Details, including how to demonstrate a failing → passing CI run, in
+[TESTING.md](TESTING.md).
+
+## Performance
+
+```bash
+cd backend
+npm run seed:perf    # generates 10,000 tickets
+npm run benchmark    # measures one real query with/without its index
+```
+
+Real measured results and the optimization story: [BUILD_LOG.md](BUILD_LOG.md#performance-pass).
 
 ## What was intentionally left out of scope, and why
 
-This is a 2-day scoped build, so several things a real product would need
-were deliberately skipped: an **Admin role** and analytics dashboard, an
-**audit log UI**, **SLA countdowns**, **file uploads**, **notifications**
-(email/Slack), **2FA**, and **refresh token rotation** (our JWT is a single
-7-day access token — simpler, but it means a session can't be silently
-revoked before it expires, and a user must log in again after 7 days). None
-of these were needed to demonstrate the core flow — auth, a role-enforced
-state machine, and real-time updates — which was the point of this build.
+**Not built at all**, as genuinely out of scope for this exercise: a live
+AI feature (documented as a viable bonus addition, not implemented —
+would need an LLM API key and is additive, not core), OpenTelemetry
+distributed tracing (structured logging covers the observability
+requirement's highest-value piece; tracing was judged lower ROI for the
+time available), Prometheus/Grafana dashboards, and an actual live
+production deployment (prepared — Docker + CI are deploy-ready — but not
+executed, since it needs accounts on a hosting platform that only the
+project owner can create).
+
+**Deliberately simplified**: no email/Slack notifications (Socket.IO covers
+the real-time requirement), no in-app file preview (download only), no
+granular per-field permission system beyond the three roles.

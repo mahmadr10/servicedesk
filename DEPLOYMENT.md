@@ -1,0 +1,107 @@
+# Deployment
+
+## MongoDB Atlas setup
+
+1. Sign up / log in at https://cloud.mongodb.com
+2. **Create a free (M0) cluster** — any region, any name.
+3. **Database Access** → create a database user (username + password;
+   "Autogenerate Secure Password" is fine, just save it — Atlas won't show
+   it again).
+4. **Network Access** → **Add IP Address** → **Allow Access From Anywhere**
+   (`0.0.0.0/0`) for this project's purposes; a real production deployment
+   would instead allowlist only the deploying server's IP.
+5. **Database** → **Connect** → **Drivers** → copy the connection string,
+   replace `<password>` with your real password, and (recommended) add a
+   database name before the `?`: `.../servicedesk?retryWrites=...`.
+
+## Environment variables
+
+### `backend/.env`
+
+| Variable | Required | Notes |
+|---|---|---|
+| `NODE_ENV` | no (default `development`) | Set `production` on a real deploy — disables pretty-printed logs, marks refresh cookies `secure` |
+| `PORT` | no (default `4000`) | |
+| `MONGODB_URI` | **yes** | Atlas connection string (above) or any MongoDB instance |
+| `JWT_ACCESS_SECRET` | **yes** | Long random string — signs access tokens |
+| `JWT_REFRESH_COOKIE_NAME` | no (default `refreshToken`) | |
+| `FRONTEND_ORIGIN` | no (default `http://localhost:5173`) | Must match the frontend's real URL in production, for CORS + cookie scoping |
+| `LOG_LEVEL` | no (default `info`) | Pino level: `trace\|debug\|info\|warn\|error\|fatal` |
+
+### `frontend/.env` (build-time — see note below)
+
+| Variable | Notes |
+|---|---|
+| `VITE_API_URL` | Backend's API base, e.g. `https://api.yourapp.com/api/v1` |
+| `VITE_SOCKET_URL` | Backend's base (no `/api/v1`), e.g. `https://api.yourapp.com` |
+
+**Important**: Vite bakes `VITE_*` variables into the compiled JS at
+**build** time — there's no way to change them after the static files are
+built (unlike the backend's env vars, which are read at container start).
+Set them correctly *before* running `npm run build` / the Docker build.
+
+## Running with Docker
+
+```bash
+docker compose up
+```
+
+Starts a local MongoDB + backend + frontend together. See root
+`docker-compose.yml` and `.env.example` for overriding any of the above
+(e.g. pointing `MONGODB_URI` at a real Atlas cluster instead of the bundled
+local Mongo). Details on the container design (multi-stage builds, non-root
+user, volumes) are commented directly in `backend/Dockerfile` and
+`frontend/Dockerfile`.
+
+> This was written carefully but not run end-to-end in the environment this
+> project was built in (Docker wasn't installed there). Run
+> `docker compose up` once yourself and confirm the three services come up
+> healthy before relying on this for a real deployment.
+
+## CI/CD
+
+`.github/workflows/ci.yml` runs on every PR and push to `main`:
+**install → lint → typecheck → test → build**, for both `backend/` and
+`frontend/` as separate jobs. See [TESTING.md](TESTING.md#demonstrating-a-failing--passing-ci-run)
+for how to demonstrate it actually catching a regression.
+
+There is currently **no CD (auto-deploy) job** — see the next section for
+why, and what adding one would look like.
+
+## Deploying live
+
+This step needs accounts on a hosting platform, which only the project
+owner can create — not something that can be done from inside this build
+session. What's already in place to make it a short process:
+
+**Backend** (needs a Node process + your `MONGODB_URI`): any of
+[Render](https://render.com), [Railway](https://railway.app), or
+[Fly.io](https://fly.io) can build directly from `backend/Dockerfile` —
+point them at this repo, set the environment variables from the table
+above, and they build the image and run it. No local Docker needed on your
+end; the platform builds it in the cloud from the same Dockerfile.
+
+**Frontend**: two options —
+1. **Static hosting** (Vercel/Netlify/Cloudflare Pages): point at
+   `frontend/`, build command `npm run build`, output directory `dist`,
+   set `VITE_API_URL`/`VITE_SOCKET_URL` as build-time env vars to your
+   deployed backend's URL.
+2. **Same container platform as the backend**, building from
+   `frontend/Dockerfile` (which already serves via nginx) — simpler to keep
+   both halves on one platform, at the cost of nginx's minor overhead vs. a
+   dedicated static host's CDN.
+
+**After deploying**, update:
+- Backend's `FRONTEND_ORIGIN` → the deployed frontend's real URL (CORS
+  will otherwise block it).
+- Frontend's `VITE_API_URL`/`VITE_SOCKET_URL` → the deployed backend's real
+  URL, and rebuild (build-time, not runtime — see above).
+- MongoDB Atlas Network Access → restrict from `0.0.0.0/0` to the actual
+  deploying platform's IP range if it publishes one, for real production
+  use.
+
+**Adding actual CD**: a `deploy` job in `ci.yml`, gated on
+`push: branches: [main]` and the existing jobs passing, that calls the
+chosen platform's deploy CLI/API (Render and Railway both have GitHub
+Actions available) — not added here since it needs real platform
+credentials as GitHub Secrets, which only the account owner can provision.
