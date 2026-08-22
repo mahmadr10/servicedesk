@@ -1,0 +1,57 @@
+services:
+  # A LOCAL MongoDB, so `docker compose up` works standalone — no Atlas
+  # account needed just to try the project out. (Point the backend at a
+  # real Atlas URI instead by overriding MONGODB_URI in a root .env file
+  # if you'd rather use that.)
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/servicedesk}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-insecure-dev-only-secret-change-me}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:8080}
+      LOG_LEVEL: info
+    ports:
+      - "4000:4000"
+    volumes:
+      # Uploaded attachments survive `docker compose down` / rebuilds —
+      # without this volume they'd live only in the container's writable
+      # layer and vanish the moment the container is recreated.
+      - backend_uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked in at BUILD time (see frontend/Dockerfile) — this must be a
+        # URL the USER'S BROWSER can reach, i.e. the published host port,
+        # not the internal Docker network name "backend".
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:4000/api/v1}
+        VITE_SOCKET_URL: ${VITE_SOCKET_URL:-http://localhost:4000}
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  mongo_data:
+  backend_uploads:
