@@ -1,173 +1,241 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { useState } from "react";
 import { useParams } from "react-router-dom";
-import {
-  addCommentRequest,
-  assignTicketToSelfRequest,
-  getTicketRequest,
-  listCommentsRequest,
-  updateTicketStatusRequest,
-} from "../api/tickets";
-import { getApiErrorMessage } from "../api/client";
-import { NEXT_STATUS, type Comment, type Ticket, type User } from "../types";
 import { StatusBadge } from "../components/StatusBadge";
+import { PriorityBadge } from "../components/PriorityBadge";
+import { SlaCountdown } from "../components/SlaCountdown";
 import { useAuth } from "../context/AuthContext";
-import { socket } from "../socket";
+import {
+  useAddComment,
+  useAssignToSelf,
+  useComments,
+  useTicket,
+  useUpdateTicketPriority,
+  useUpdateTicketStatus,
+  useUploadAttachment,
+} from "../hooks/useTickets";
+import { downloadAttachment } from "../api/tickets";
+import { getApiErrorMessage } from "../api/client";
+import { TICKET_PRIORITIES, type TicketPriority, type User } from "../types";
 
 export function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
-  const [ticket, setTicket] = useState<Ticket | null>(null);
-  const [comments, setComments] = useState<Comment[]>([]);
+  const { data: ticket, isLoading, error } = useTicket(id);
+  const { data: comments } = useComments(id);
+
+  const updateStatus = useUpdateTicketStatus(id ?? "");
+  const updatePriority = useUpdateTicketPriority(id ?? "");
+  const assignToSelf = useAssignToSelf(id ?? "");
+  const uploadAttachment = useUploadAttachment(id ?? "");
+  const addComment = useAddComment(id ?? "");
+
   const [commentText, setCommentText] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [isInternal, setIsInternal] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!id) return;
-    Promise.all([getTicketRequest(id), listCommentsRequest(id)])
-      .then(([t, c]) => {
-        setTicket(t);
-        setComments(c);
-      })
-      .catch((err) => setError(getApiErrorMessage(err)));
-  }, [id]);
-
-  // Live updates: if this exact ticket changes (status/assignment) while
-  // we're looking at it, patch it in place. See MyTicketsPage for the note
-  // on why the cleanup function matters for avoiding duplicate listeners.
-  useEffect(() => {
-    function handleUpdate(updated: Ticket) {
-      if (updated._id === id) setTicket(updated);
-    }
-    socket.on("ticket:updated", handleUpdate);
-    return () => {
-      socket.off("ticket:updated", handleUpdate);
-    };
-  }, [id]);
-
-  async function handleAddComment(e: FormEvent) {
-    e.preventDefault();
-    if (!id || !commentText.trim()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const comment = await addCommentRequest(id, commentText.trim());
-      setComments((prev) => [...prev, comment]);
-      setCommentText("");
-    } catch (err) {
-      setError(getApiErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleAdvanceStatus() {
-    if (!id || !ticket) return;
-    const next = NEXT_STATUS[ticket.status];
-    if (!next) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const updated = await updateTicketStatusRequest(id, next);
-      setTicket(updated);
-    } catch (err) {
-      setError(getApiErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleAssign() {
-    if (!id) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const updated = await assignTicketToSelfRequest(id);
-      setTicket(updated);
-    } catch (err) {
-      setError(getApiErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (error && !ticket) return <p className="mt-8 text-center text-sm text-red-600">{error}</p>;
-  if (!ticket) return <p className="mt-8 text-center text-sm text-slate-500">Loading…</p>;
+  if (isLoading) return <p className="mt-8 text-center text-sm text-slate-500">Loading…</p>;
+  if (error || !ticket) return <p className="mt-8 text-center text-sm text-red-600">{getApiErrorMessage(error)}</p>;
 
   const customer = ticket.customer as User;
   const agent = ticket.assignedAgent as User | null;
-  const nextStatus = NEXT_STATUS[ticket.status];
+  const isStaff = user?.role === "AGENT" || user?.role === "ADMIN";
+  const isResolvedOrClosed = ticket.status === "RESOLVED" || ticket.status === "CLOSED";
+
+  async function runAction(fn: () => Promise<unknown>) {
+    setActionError(null);
+    try {
+      await fn();
+    } catch (err) {
+      setActionError(getApiErrorMessage(err));
+    }
+  }
+
+  async function handleCommentSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!commentText.trim()) return;
+    await runAction(async () => {
+      await addComment.mutateAsync({ text: commentText.trim(), isInternal });
+      setCommentText("");
+      setIsInternal(false);
+    });
+  }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await runAction(() => uploadAttachment.mutateAsync(file));
+    e.target.value = "";
+  }
 
   return (
     <div className="mx-auto mt-8 max-w-2xl">
       <div className="rounded-lg border border-slate-200 bg-white p-6">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-1 flex items-center justify-between">
           <h1 className="text-xl font-semibold text-slate-800">{ticket.title}</h1>
           <StatusBadge status={ticket.status} />
         </div>
+        <p className="mb-3 text-xs text-slate-400">{ticket.ticketNumber}</p>
         <p className="mb-4 text-sm text-slate-600">{ticket.description}</p>
-        <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
+
+        <div className="grid grid-cols-2 gap-3 text-xs text-slate-500 sm:grid-cols-3">
           <p>Category: {ticket.category}</p>
-          <p>Priority: {ticket.priority}</p>
+          <p className="flex items-center gap-1">
+            Priority: <PriorityBadge priority={ticket.priority} />
+          </p>
           <p>Customer: {customer?.name ?? "—"}</p>
           <p>Agent: {agent?.name ?? "Unassigned"}</p>
+          {ticket.tags.length > 0 && <p>Tags: {ticket.tags.join(", ")}</p>}
         </div>
 
-        {user?.role === "AGENT" && (
-          <div className="mt-4 flex gap-2 border-t border-slate-100 pt-4">
+        {!isResolvedOrClosed && (
+          <div className="mt-4 grid grid-cols-2 gap-3 rounded bg-slate-50 p-3 text-xs">
+            <div>
+              <p className="text-slate-400">Response SLA</p>
+              <SlaCountdown deadline={ticket.responseDeadline} breached={ticket.sla.responseBreached} />
+            </div>
+            <div>
+              <p className="text-slate-400">Resolution SLA</p>
+              <SlaCountdown deadline={ticket.resolutionDeadline} breached={ticket.sla.resolutionBreached} />
+            </div>
+          </div>
+        )}
+
+        {/* Every button here reflects what the SERVER says is legal right
+            now (ticket.allowedNextStatuses) — the frontend doesn't
+            re-implement the state machine's role rules, it just renders
+            whatever the authoritative answer was on the last fetch. */}
+        {isStaff && (
+          <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
             {ticket.status === "TRIAGED" && !agent && (
               <button
-                onClick={handleAssign}
-                disabled={busy}
-                className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                onClick={() => runAction(() => assignToSelf.mutateAsync())}
+                className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
               >
                 Assign to me
               </button>
             )}
-            {nextStatus && (
-              <button
-                onClick={handleAdvanceStatus}
-                disabled={busy}
-                className="rounded bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-900 disabled:opacity-50"
+            {ticket.allowedNextStatuses
+              ?.filter((s) => s !== "OPEN" && s !== "CLOSED") // reopen/close are customer-initiated actions, shown below instead
+              .map((next) => (
+                <button
+                  key={next}
+                  onClick={() => runAction(() => updateStatus.mutateAsync(next))}
+                  className="rounded bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-900"
+                >
+                  Move to {next.replace(/_/g, " ")}
+                </button>
+              ))}
+            <label className="ml-auto text-xs text-slate-500">
+              Priority:
+              <select
+                value={ticket.priority}
+                onChange={(e) => runAction(() => updatePriority.mutateAsync(e.target.value as TicketPriority))}
+                className="ml-1 rounded border border-slate-300 px-1.5 py-1 text-xs"
               >
-                Move to {nextStatus.replace("_", " ")}
-              </button>
-            )}
+                {TICKET_PRIORITIES.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         )}
-        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+
+        {/* Customer-initiated transitions: closing a resolved ticket, or
+            reopening a closed one. */}
+        {user?.role === "CUSTOMER" && ticket.allowedNextStatuses?.includes("CLOSED") && (
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <button
+              onClick={() => runAction(() => updateStatus.mutateAsync("CLOSED"))}
+              className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+            >
+              Close ticket
+            </button>
+          </div>
+        )}
+        {user?.role === "CUSTOMER" && ticket.allowedNextStatuses?.includes("OPEN") && (
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <button
+              onClick={() => runAction(() => updateStatus.mutateAsync("OPEN"))}
+              className="rounded bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+            >
+              Reopen ticket
+            </button>
+          </div>
+        )}
+
+        {actionError && <p className="mt-3 text-sm text-red-600">{actionError}</p>}
       </div>
 
+      {/* Attachments */}
+      <div className="mt-6 rounded-lg border border-slate-200 bg-white p-6">
+        <h2 className="mb-3 text-sm font-semibold text-slate-800">Attachments</h2>
+        {ticket.attachments.length === 0 && <p className="text-sm text-slate-400">No files attached.</p>}
+        <ul className="flex flex-col gap-1">
+          {ticket.attachments.map((a) => (
+            <li key={a._id} className="flex items-center justify-between text-sm">
+              <span className="text-slate-700">
+                {a.originalName} <span className="text-xs text-slate-400">({Math.round(a.size / 1024)} KB)</span>
+              </span>
+              <button
+                onClick={() => downloadAttachment(ticket._id, a._id, a.originalName)}
+                className="text-xs text-blue-600 hover:underline"
+              >
+                Download
+              </button>
+            </li>
+          ))}
+        </ul>
+        <label className="mt-3 inline-block cursor-pointer rounded bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-200">
+          {uploadAttachment.isPending ? "Uploading…" : "Upload file"}
+          <input type="file" onChange={handleFileChange} className="hidden" disabled={uploadAttachment.isPending} />
+        </label>
+      </div>
+
+      {/* Comments */}
       <div className="mt-6 rounded-lg border border-slate-200 bg-white p-6">
         <h2 className="mb-4 text-sm font-semibold text-slate-800">Comments</h2>
         <div className="flex flex-col gap-3">
-          {comments.length === 0 && <p className="text-sm text-slate-400">No comments yet.</p>}
-          {comments.map((c) => {
+          {(!comments || comments.length === 0) && <p className="text-sm text-slate-400">No comments yet.</p>}
+          {comments?.map((c) => {
             const author = c.author as User;
             return (
-              <div key={c._id} className="rounded border border-slate-100 bg-slate-50 p-3 text-sm">
+              <div
+                key={c._id}
+                className={`rounded border p-3 text-sm ${c.isInternal ? "border-amber-200 bg-amber-50" : "border-slate-100 bg-slate-50"}`}
+              >
                 <p className="mb-1 text-xs font-medium text-slate-500">
                   {author?.name ?? "Unknown"} · {c.authorRole}
+                  {c.isInternal && <span className="ml-2 rounded bg-amber-200 px-1.5 py-0.5 text-amber-800">Internal note</span>}
                 </p>
                 <p className="text-slate-700">{c.text}</p>
               </div>
             );
           })}
         </div>
-        <form onSubmit={handleAddComment} className="mt-4 flex gap-2">
+        <form onSubmit={handleCommentSubmit} className="mt-4 flex flex-col gap-2">
           <input
             value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
             placeholder="Add a comment…"
-            className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
+            className="rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
           />
-          <button
-            type="submit"
-            disabled={busy || !commentText.trim()}
-            className="rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            Post
-          </button>
+          <div className="flex items-center justify-between">
+            {isStaff && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                <input type="checkbox" checked={isInternal} onChange={(e) => setIsInternal(e.target.checked)} />
+                Internal note (staff only — customer won't see this)
+              </label>
+            )}
+            <button
+              type="submit"
+              disabled={addComment.isPending || !commentText.trim()}
+              className="ml-auto rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              Post
+            </button>
+          </div>
         </form>
       </div>
     </div>

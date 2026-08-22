@@ -1,87 +1,73 @@
-import { type FormEvent, useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "react-router-dom";
-import { createTicketRequest } from "../api/tickets";
+import { useState } from "react";
+import { TICKET_PRIORITIES } from "../types";
+import { createTicketSchema, type CreateTicketForm } from "../validation";
+import { useCreateTicket } from "../hooks/useTickets";
+import { useActiveCategories } from "../hooks/useAdmin";
 import { getApiErrorMessage } from "../api/client";
-import { TICKET_CATEGORIES, TICKET_PRIORITIES, type TicketCategory, type TicketPriority } from "../types";
 
 export function CreateTicketPage() {
   const navigate = useNavigate();
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [category, setCategory] = useState<TicketCategory>("TECHNICAL");
-  const [priority, setPriority] = useState<TicketPriority>("MEDIUM");
+  const { data: categories } = useActiveCategories();
+  const createTicket = useCreateTicket();
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<CreateTicketForm>({ resolver: zodResolver(createTicketSchema), defaultValues: { priority: "MEDIUM" } });
+
+  async function onSubmit(data: CreateTicketForm) {
     setError(null);
-
-    // Frontend validation: quick, friendly feedback without a round trip.
-    // The server (Zod schemas) enforces the same rules independently — the
-    // frontend check can be bypassed (devtools, curl), so it's UX only,
-    // never the real gate.
-    if (title.trim().length < 3) {
-      setError("Title must be at least 3 characters.");
-      return;
-    }
-    if (description.trim().length < 10) {
-      setError("Description must be at least 10 characters.");
-      return;
-    }
-
-    setSubmitting(true);
     try {
-      const ticket = await createTicketRequest({ title, description, category, priority });
+      const tags = data.tags ? data.tags.split(",").map((t: string) => t.trim()).filter(Boolean) : [];
+      const ticket = await createTicket.mutateAsync({ ...data, tags });
       navigate(`/tickets/${ticket._id}`);
     } catch (err) {
       setError(getApiErrorMessage(err));
-    } finally {
-      setSubmitting(false);
     }
   }
 
   return (
     <div className="mx-auto mt-10 max-w-lg rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
       <h1 className="mb-6 text-xl font-semibold text-slate-800">Create a ticket</h1>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <input
-          required
-          placeholder="Title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          className="rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
-        />
-        <textarea
-          required
-          rows={5}
-          placeholder="Describe the issue…"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className="rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
-        />
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+        <div>
+          <input
+            placeholder="Title"
+            {...register("title")}
+            className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
+          />
+          {errors.title && <p className="mt-1 text-xs text-red-600">{errors.title.message}</p>}
+        </div>
+        <div>
+          <textarea
+            rows={5}
+            placeholder="Describe the issue…"
+            {...register("description")}
+            className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
+          />
+          {errors.description && <p className="mt-1 text-xs text-red-600">{errors.description.message}</p>}
+        </div>
         <div className="flex gap-4">
           <label className="flex-1 text-sm text-slate-600">
             Category
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value as TicketCategory)}
-              className="mt-1 block w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-            >
-              {TICKET_CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
+            <select {...register("category")} className="mt-1 block w-full rounded border border-slate-300 px-2 py-1.5 text-sm">
+              <option value="">Select…</option>
+              {categories?.map((c) => (
+                <option key={c._id} value={c.name}>
+                  {c.name}
                 </option>
               ))}
             </select>
+            {errors.category && <p className="mt-1 text-xs text-red-600">{errors.category.message}</p>}
           </label>
           <label className="flex-1 text-sm text-slate-600">
             Priority
-            <select
-              value={priority}
-              onChange={(e) => setPriority(e.target.value as TicketPriority)}
-              className="mt-1 block w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-            >
+            <select {...register("priority")} className="mt-1 block w-full rounded border border-slate-300 px-2 py-1.5 text-sm">
               {TICKET_PRIORITIES.map((p) => (
                 <option key={p} value={p}>
                   {p}
@@ -90,13 +76,20 @@ export function CreateTicketPage() {
             </select>
           </label>
         </div>
+        <div>
+          <input
+            placeholder="Tags (comma-separated, optional)"
+            {...register("tags")}
+            className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
+          />
+        </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
         <button
           type="submit"
-          disabled={submitting}
+          disabled={isSubmitting}
           className="rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {submitting ? "Creating…" : "Create ticket"}
+          {isSubmitting ? "Creating…" : "Create ticket"}
         </button>
       </form>
     </div>

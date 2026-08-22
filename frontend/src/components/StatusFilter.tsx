@@ -16,7 +16,7 @@ export function StatusFilter({
       <option value="">All statuses</option>
       {TICKET_STATUSES.map((s) => (
         <option key={s} value={s}>
-          {s.replace("_", " ")}
+          {s.replace(/_/g, " ")}
         </option>
       ))}
     </select>

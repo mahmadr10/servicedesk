@@ -1,59 +1,65 @@
-import { type FormEvent, useState } from "react";
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, useNavigate } from "react-router-dom";
-import { loginRequest } from "../api/auth";
 import { getApiErrorMessage } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { loginSchema, type LoginForm } from "../validation";
 
 export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  // React Hook Form manages field state/touched/dirty and re-renders only
+  // what changed; the zodResolver plugs our Zod schema in as the validation
+  // engine, so field-level errors (e.g. "Enter a valid email") appear as you
+  // type, without us wiring up onChange handlers by hand for every field.
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<LoginForm>({ resolver: zodResolver(loginSchema) });
+
+  async function onSubmit(data: LoginForm) {
     setError(null);
-    setSubmitting(true);
     try {
-      const { user, token } = await loginRequest({ email, password });
-      login(user, token);
+      await login(data.email, data.password);
       navigate("/");
     } catch (err) {
       setError(getApiErrorMessage(err));
-    } finally {
-      setSubmitting(false);
     }
   }
 
   return (
     <div className="mx-auto mt-16 max-w-sm rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
       <h1 className="mb-6 text-xl font-semibold text-slate-800">Log in</h1>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <input
-          type="email"
-          required
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
-        />
-        <input
-          type="password"
-          required
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
-        />
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+        <div>
+          <input
+            type="email"
+            placeholder="Email"
+            {...register("email")}
+            className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
+          />
+          {errors.email && <p className="mt-1 text-xs text-red-600">{errors.email.message}</p>}
+        </div>
+        <div>
+          <input
+            type="password"
+            placeholder="Password"
+            {...register("password")}
+            className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
+          />
+          {errors.password && <p className="mt-1 text-xs text-red-600">{errors.password.message}</p>}
+        </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
         <button
           type="submit"
-          disabled={submitting}
+          disabled={isSubmitting}
           className="rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {submitting ? "Logging in…" : "Log in"}
+          {isSubmitting ? "Logging in…" : "Log in"}
         </button>
       </form>
       <p className="mt-4 text-center text-sm text-slate-500">
@@ -61,6 +67,11 @@ export function LoginPage() {
         <Link to="/register" className="text-blue-600 hover:underline">
           Register
         </Link>
+      </p>
+      <p className="mt-3 rounded bg-slate-50 p-2 text-center text-xs text-slate-400">
+        Demo accounts (after running <code>npm run seed:users</code>):
+        <br />
+        admin@demo.servicedesk · agent@demo.servicedesk · customer@demo.servicedesk
       </p>
     </div>
   );

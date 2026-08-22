@@ -1,14 +1,14 @@
-// These mirror the backend's Mongoose models/enums exactly (see
-// backend/src/models/Ticket.ts, User.ts). Keeping them in one file makes it
-// obvious when frontend and backend drift out of sync.
+// Mirrors the backend's Mongoose models/enums (see backend/src/models/*.ts).
 
-export type UserRole = "CUSTOMER" | "AGENT";
+export type UserRole = "CUSTOMER" | "AGENT" | "ADMIN";
 
 export interface User {
   _id: string;
   name: string;
   email: string;
   role: UserRole;
+  isActive: boolean;
+  createdAt: string;
 }
 
 export type TicketStatus =
@@ -16,6 +16,7 @@ export type TicketStatus =
   | "TRIAGED"
   | "ASSIGNED"
   | "IN_PROGRESS"
+  | "WAITING_FOR_CUSTOMER"
   | "RESOLVED"
   | "CLOSED";
 
@@ -24,39 +25,53 @@ export const TICKET_STATUSES: TicketStatus[] = [
   "TRIAGED",
   "ASSIGNED",
   "IN_PROGRESS",
+  "WAITING_FOR_CUSTOMER",
   "RESOLVED",
   "CLOSED",
 ];
 
-// The one legal "next status" for each current status — mirrors the
-// backend's NEXT_STATUS map. Used only to decide which button to SHOW the
-// agent; the server re-checks this rule independently and is the real gate.
-export const NEXT_STATUS: Record<TicketStatus, TicketStatus | null> = {
-  OPEN: "TRIAGED",
-  TRIAGED: "ASSIGNED",
-  ASSIGNED: "IN_PROGRESS",
-  IN_PROGRESS: "RESOLVED",
-  RESOLVED: "CLOSED",
-  CLOSED: null,
-};
+export type TicketPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export const TICKET_PRIORITIES: TicketPriority[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
-export type TicketCategory = "TECHNICAL" | "BILLING" | "ACCOUNT" | "OTHER";
-export const TICKET_CATEGORIES: TicketCategory[] = ["TECHNICAL", "BILLING", "ACCOUNT", "OTHER"];
+export interface TicketAttachment {
+  _id: string;
+  filename: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  uploadedBy: string;
+  uploadedAt: string;
+}
 
-export type TicketPriority = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
-export const TICKET_PRIORITIES: TicketPriority[] = ["LOW", "MEDIUM", "HIGH", "URGENT"];
+export interface SlaInfo {
+  responseBreached: boolean;
+  resolutionBreached: boolean;
+  responseRemainingMs: number;
+  resolutionRemainingMs: number;
+}
 
 export interface Ticket {
   _id: string;
+  ticketNumber: string;
   title: string;
   description: string;
-  category: TicketCategory;
+  category: string;
   priority: TicketPriority;
   status: TicketStatus;
+  tags: string[];
   customer: User | string;
   assignedAgent: User | string | null;
+  attachments: TicketAttachment[];
+  responseDeadline: string;
+  resolutionDeadline: string;
+  firstResponseAt: string | null;
+  resolvedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  sla: SlaInfo;
+  // Only present on the single-ticket GET (not list) — the server's
+  // authoritative answer to "which status buttons should I show."
+  allowedNextStatuses?: TicketStatus[];
 }
 
 export interface Comment {
@@ -65,11 +80,60 @@ export interface Comment {
   author: User | string;
   authorRole: UserRole;
   text: string;
+  isInternal: boolean;
   createdAt: string;
 }
 
-// The consistent envelope every API response uses (success cases). Errors
-// use { success: false, error: { code, message } } — see api/client.ts.
+export interface Category {
+  _id: string;
+  name: string;
+  description?: string;
+  isActive: boolean;
+}
+
+export interface SLAPolicy {
+  _id: string;
+  priority: TicketPriority;
+  responseMinutes: number;
+  resolutionMinutes: number;
+}
+
+export interface AuditLogEntry {
+  _id: string;
+  actor: User | string | null;
+  action: string;
+  entity: string;
+  entityId: string;
+  oldValue: unknown;
+  newValue: unknown;
+  metadata: Record<string, unknown>;
+  timestamp: string;
+}
+
+export interface DashboardSummary {
+  total: number;
+  open: number;
+  inProgress: number;
+  resolved: number;
+  critical: number;
+  slaBreaches: number;
+  avgResolutionMinutes: number;
+}
+
+export interface DashboardAnalytics {
+  byStatus: Record<string, number>;
+  byPriority: Record<string, number>;
+  byCategory: Record<string, number>;
+  byAgent: { agentId: string; name: string; email: string; count: number }[];
+}
+
+export interface Pagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
 export interface ApiSuccess<T> {
   success: true;
   data: T;
