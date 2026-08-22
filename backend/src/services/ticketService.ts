@@ -28,13 +28,28 @@ export function isLegalTransition(current: TicketStatus, next: TicketStatus): bo
   return TRANSITIONS[current]?.includes(next) ?? false;
 }
 
+// `ticket.customer` is sometimes a raw ObjectId (ticket loaded via
+// findTicketDocById, e.g. for a status update) and sometimes a POPULATED
+// User document (ticket loaded via findTicketById for a detail view, which
+// runs .populate("customer", ...) to also return the customer's name).
+// Calling .toString() on a populated document does NOT give back the id
+// string — it was silently comparing "[object Object]" to a hex string and
+// failing 100% of the time, which locked every customer out of their own
+// ticket detail page. This normalizes both shapes to a plain id string.
+function customerIdOf(customer: ITicket["customer"] | { _id: { toString(): string } }): string {
+  if (typeof customer === "object" && customer !== null && "_id" in customer) {
+    return (customer as { _id: { toString(): string } })._id.toString();
+  }
+  return (customer as { toString(): string }).toString();
+}
+
 // Role + ownership rules layered ON TOP of the pure graph above. The graph
 // alone can't know "only the ticket's own customer may close it" — that
 // needs the ticket and the acting user, not just two status strings.
 function isTransitionAllowedForActor(ticket: ITicket, user: JwtPayload, next: TicketStatus): boolean {
   if (!isLegalTransition(ticket.status, next)) return false;
 
-  const isOwner = ticket.customer.toString() === user.userId;
+  const isOwner = customerIdOf(ticket.customer) === user.userId;
   const isStaff = user.role === "AGENT" || user.role === "ADMIN";
 
   // Two transitions are customer-initiated: closing a resolved ticket, and
@@ -64,8 +79,8 @@ async function findTicketDocOr404(ticketId: string) {
   return ticket;
 }
 
-function assertCanView(ticket: { customer: { toString(): string } }, user: JwtPayload) {
-  if (user.role === "CUSTOMER" && ticket.customer.toString() !== user.userId) {
+function assertCanView(ticket: { customer: ITicket["customer"] | { _id: { toString(): string } } }, user: JwtPayload) {
+  if (user.role === "CUSTOMER" && customerIdOf(ticket.customer) !== user.userId) {
     throw new AppError(403, "FORBIDDEN", "You can only view your own tickets.");
   }
 }

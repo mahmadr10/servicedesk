@@ -116,6 +116,27 @@ describe("Tickets: creation, retrieval, assignment, status transitions", () => {
     expect(res.body.error.code).toBe("INVALID_CATEGORY");
   });
 
+  it("lets a customer view their OWN ticket via GET /tickets/:id (populated customer field)", async () => {
+    // Regression test: GET-by-id populates the customer field (to include
+    // their name/email in the response), which is a DIFFERENT code path
+    // than list/create. A prior bug compared the populated User object
+    // against user.userId with .toString() and always failed, locking
+    // every customer out of their own ticket detail page.
+    const { token } = await registerAndLogin("CUSTOMER", "viewowncust");
+    const created = await request(app)
+      .post("/api/v1/tickets")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ title: "Can I see my own ticket?", description: "This should be visible to its owner", category: "Other", priority: "LOW" });
+    const ticketId = created.body.data.ticket._id;
+
+    const res = await request(app).get(`/api/v1/tickets/${ticketId}`).set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.ticket._id).toBe(ticketId);
+    // Triaging is staff-only, so a customer viewing their own OPEN ticket
+    // is correctly offered no status-change buttons at all.
+    expect(res.body.data.ticket.allowedNextStatuses).toEqual([]);
+  });
+
   it("blocks a customer from creating a ticket as another customer's — a customer cannot see others' tickets", async () => {
     const a = await registerAndLogin("CUSTOMER", "custA");
     const b = await registerAndLogin("CUSTOMER", "custB");

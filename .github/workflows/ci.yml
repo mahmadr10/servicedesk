@@ -1,0 +1,73 @@
+name: CI
+
+# Runs on every pull request AND every push to main — a PR shows you the
+# result before merging; main gives a permanent record that the branch
+# stays green over time.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (lint, typecheck, unit + integration tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      # Install → Lint → Type Check → Unit Tests → Integration Tests → Build
+      # — the exact pipeline order the spec asks for. Each step only runs if
+      # the previous one succeeded (GitHub Actions' default), so a lint
+      # failure stops the pipeline before wasting time running tests against
+      # code that doesn't even pass style checks.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      # vitest.config.mts's globalSetup spins up an in-memory MongoDB, so
+      # this single "test" step covers BOTH the unit tests (state machine,
+      # SLA math) and the integration tests (Supertest driving the real
+      # Express app) — no separate database service container needed in CI.
+      - name: Unit + integration tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  frontend:
+    name: Frontend (lint, typecheck, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check + build
+        run: npm run build

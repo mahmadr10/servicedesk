@@ -115,7 +115,11 @@ export function TicketDetailPage() {
               </button>
             )}
             {ticket.allowedNextStatuses
-              ?.filter((s) => s !== "OPEN" && s !== "CLOSED") // reopen/close are customer-initiated actions, shown below instead
+              // OPEN/CLOSED are customer-initiated actions, rendered separately below.
+              // ASSIGNED must always go through "Assign to me" (which also sets
+              // assignedAgent) — a generic status-only button here would let an
+              // agent set status to ASSIGNED with no agent actually attached.
+              ?.filter((s) => s !== "OPEN" && s !== "CLOSED" && s !== "ASSIGNED")
               .map((next) => (
                 <button
                   key={next}
