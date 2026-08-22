@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { env } from "./env";
+import { logger } from "../observability/logger";
 
 // Mongoose is a library that sits on top of the raw MongoDB driver and lets
 // us define "schemas" (shapes for our documents, e.g. a User always has an
@@ -9,9 +10,9 @@ import { env } from "./env";
 export async function connectDB() {
   try {
     await mongoose.connect(env.MONGODB_URI);
-    console.log("✅ MongoDB connected");
+    logger.info("MongoDB connected");
   } catch (err) {
-    console.error("❌ MongoDB connection failed:", err);
+    logger.error({ err }, "MongoDB connection failed");
     process.exit(1);
   }
 }

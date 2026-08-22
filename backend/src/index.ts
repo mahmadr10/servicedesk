@@ -4,6 +4,7 @@ import { connectDB } from "./config/db";
 import { seedDefaults } from "./config/seed";
 import { initSockets } from "./sockets";
 import { createApp } from "./app";
+import { logger } from "./observability/logger";
 
 async function main() {
   await connectDB();
@@ -14,11 +15,11 @@ async function main() {
   initSockets(httpServer);
 
   httpServer.listen(env.PORT, () => {
-    console.log(`Backend listening on http://localhost:${env.PORT}`);
+    logger.info(`Backend listening on http://localhost:${env.PORT}`);
   });
 }
 
 main().catch((err) => {
-  console.error("Fatal startup error:", err);
+  console.error("Fatal startup error:", err); // logger itself may not be safely usable if startup failed this early
   process.exit(1);
 });

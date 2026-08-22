@@ -1,4 +1,5 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from "axios";
+import { API_BASE_URL } from "../config";
 
 // The access token now lives ONLY in memory (a plain module variable) —
 // never in localStorage. This is the frontend half of the access/refresh
@@ -17,7 +18,7 @@ export function getAccessToken() {
 }
 
 export const api = axios.create({
-  baseURL: "http://localhost:4000/api/v1",
+  baseURL: API_BASE_URL,
   // Required for the browser to send/receive the httpOnly refresh-token
   // cookie on a cross-origin request (frontend :5173, backend :4000).
   withCredentials: true,
@@ -34,11 +35,7 @@ api.interceptors.request.use((config) => {
 // NOT go through the response interceptor below (that would recurse: a
 // failed refresh triggering another refresh attempt forever).
 async function performRefresh() {
-  const res = await axios.post(
-    "http://localhost:4000/api/v1/auth/refresh",
-    {},
-    { withCredentials: true }
-  );
+  const res = await axios.post(`${API_BASE_URL}/auth/refresh`, {}, { withCredentials: true });
   const { accessToken: newToken, user } = res.data.data;
   setAccessToken(newToken);
   return { accessToken: newToken as string, user };

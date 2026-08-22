@@ -1,4 +1,5 @@
 import { recordAuditLog } from "../repositories/auditLogRepository";
+import { logger } from "../observability/logger";
 
 // A thin, deliberately boring wrapper — every place that changes a ticket
 // (or a user, or a category) calls this ONE function instead of writing to
@@ -20,6 +21,6 @@ export function logAction(entry: {
   // just because the audit write had a transient hiccup), but silently
   // losing audit entries forever would defeat the point, so at least log it.
   return recordAuditLog(entry).catch((err) => {
-    console.error("Failed to write audit log entry:", entry.action, err);
+    logger.error({ err, action: entry.action }, "Failed to write audit log entry");
   });
 }

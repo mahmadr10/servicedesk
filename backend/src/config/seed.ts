@@ -1,6 +1,7 @@
 import { Category } from "../models/Category";
 import { SLAPolicy, DEFAULT_SLA_POLICIES } from "../models/SLAPolicy";
 import { TicketPriority, TICKET_PRIORITIES } from "../models/Ticket";
+import { logger } from "../observability/logger";
 
 const DEFAULT_CATEGORIES = ["Technical", "Billing", "Account", "Payment", "Other"];
 
@@ -14,7 +15,7 @@ export async function seedDefaults() {
   const categoryCount = await Category.countDocuments();
   if (categoryCount === 0) {
     await Category.insertMany(DEFAULT_CATEGORIES.map((name) => ({ name, isActive: true })));
-    console.log(`🌱 Seeded ${DEFAULT_CATEGORIES.length} default categories`);
+    logger.info(`Seeded ${DEFAULT_CATEGORIES.length} default categories`);
   }
 
   const policyCount = await SLAPolicy.countDocuments();
@@ -22,6 +23,6 @@ export async function seedDefaults() {
     await SLAPolicy.insertMany(
       TICKET_PRIORITIES.map((priority: TicketPriority) => ({ priority, ...DEFAULT_SLA_POLICIES[priority] }))
     );
-    console.log(`🌱 Seeded ${TICKET_PRIORITIES.length} default SLA policies`);
+    logger.info(`Seeded ${TICKET_PRIORITIES.length} default SLA policies`);
   }
 }

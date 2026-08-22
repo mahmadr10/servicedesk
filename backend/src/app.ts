@@ -6,13 +6,15 @@ import { env } from "./config/env";
 import routes from "./routes";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { generalLimiter } from "./middleware/rateLimit";
+import { requestLogger } from "./observability/requestLogger";
 
-// Building the Express app is separated from STARTING it (index.ts) so
-// integration tests can import `app` and drive it directly with Supertest —
-// no real network port, no real process — while index.ts remains the only
-// place that actually calls .listen() and connects to a real database.
 export function createApp() {
   const app = express();
+
+  // Logging goes FIRST, before anything else touches the request — that
+  // way it wraps the entire lifecycle (including time spent in helmet,
+  // CORS, rate limiting) and reports the true end-to-end duration.
+  app.use(requestLogger);
 
   app.use(helmet());
   app.use(cors({ origin: env.FRONTEND_ORIGIN, credentials: true }));

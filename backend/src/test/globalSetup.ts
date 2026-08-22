@@ -12,6 +12,7 @@ export default async function setup() {
   process.env.MONGODB_URI = mongod.getUri("servicedesk_test");
   process.env.JWT_ACCESS_SECRET = "test-only-secret-do-not-use-in-production";
   process.env.FRONTEND_ORIGIN = "http://localhost:5173";
+  process.env.LOG_LEVEL = "silent"; // the per-request log lines are real signal in dev/prod, just noise in a test run's console output
 
   // The returned function is Vitest's teardown — runs once after the whole
   // test run finishes, so the in-memory server's process is cleaned up
