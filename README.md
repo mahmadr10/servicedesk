@@ -52,7 +52,13 @@ changes to everyone watching a ticket, without a page refresh.
   file-upload restrictions. Details in [SECURITY.md](SECURITY.md).
 - **Observability**: structured JSON logging (Pino) with request ids,
   method/route/status/duration/userId on every request; errors correlate to
-  logs via a `requestId` in the response.
+  logs via a `requestId` in the response. **OpenTelemetry** auto-instruments
+  HTTP/Express/MongoDB, plus explicit spans around the Service layer, so a
+  request traces `HTTP → Route → Service → MongoDB` end to end; a Prometheus
+  metrics endpoint (`/metrics`) ships alongside it. Zero setup required
+  (traces print to the console, no collector needed) — or point it at Jaeger
+  (bundled in `docker compose up`, UI at http://localhost:16686) for a real
+  trace waterfall. Details: [ARCHITECTURE.md](ARCHITECTURE.md#observability).
 - **Testing**: Vitest unit tests (state machine, SLA math), Supertest
   integration tests (real HTTP against a real in-memory MongoDB), and a
   Playwright E2E suite driving a real browser through the full ticket
@@ -144,13 +150,12 @@ Real measured results and the optimization story: [BUILD_LOG.md](BUILD_LOG.md#pe
 
 **Not built at all**, as genuinely out of scope for this exercise: a live
 AI feature (documented as a viable bonus addition, not implemented —
-would need an LLM API key and is additive, not core), OpenTelemetry
-distributed tracing (structured logging covers the observability
-requirement's highest-value piece; tracing was judged lower ROI for the
-time available), Prometheus/Grafana dashboards, and an actual live
-production deployment (prepared — Docker + CI are deploy-ready — but not
-executed, since it needs accounts on a hosting platform that only the
-project owner can create).
+would need an LLM API key and is additive, not core), a Grafana dashboard on
+top of the Prometheus metrics endpoint (the endpoint itself exists — wiring
+an actual Grafana instance to it is one `docker-compose` service away, not
+done here), and an actual live production deployment (prepared — Docker + CI
+are deploy-ready — but not executed, since it needs accounts on a hosting
+platform that only the project owner can create).
 
 **Deliberately simplified**: no email/Slack notifications (Socket.IO covers
 the real-time requirement), no in-app file preview (download only), no

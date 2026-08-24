@@ -10,6 +10,8 @@ flowchart LR
     WS["Socket.IO<br/>(same HTTP server)"]
     Mongo[("MongoDB<br/>Atlas or local")]
     Disk[("Local disk<br/>ticket attachments")]
+    Jaeger[("Jaeger<br/>(Docker only)")]
+    Prom["/metrics<br/>(Prometheus format)"]
 
     Browser -- "HTTPS (REST)" --> LB
     Browser -- "HTTPS (REST, direct in dev)" --> API
@@ -18,6 +20,8 @@ flowchart LR
     API -- Mongoose --> Mongo
     WS -- "same process" --> API
     API -- "read/write files" --> Disk
+    API -- "traces, OTLP/HTTP" --> Jaeger
+    API -- "exposes" --> Prom
 ```
 
 In development, the frontend (Vite dev server, :5173) calls the backend
@@ -219,6 +223,67 @@ sequenceDiagram
     Ctrl-->>B: { success, data } JSON
     Note over Log,B: on error: errorHandler catches it,<br/>logs full detail, returns { success:false, error, requestId }
 ```
+
+## Observability
+
+Two complementary layers, deliberately not the same thing:
+
+- **Structured logs** (Pino, see [SECURITY.md](SECURITY.md) and
+  `observability/logger.ts`/`requestLogger.ts`) answer "what happened, in
+  words" — one JSON line per request, correlated to a client-visible
+  `requestId`.
+- **Traces + metrics** (OpenTelemetry, `observability/tracing.ts`/`otel.ts`)
+  answer "where did the time go, across layers, for THIS one request" —
+  something a log line's single duration number can't show.
+
+```mermaid
+flowchart LR
+    HTTP["HTTP Request<br/>(auto-instrumented: http)"]
+    Route["Express Route<br/>(auto-instrumented: express)"]
+    Svc["Service<br/>(manual span: withSpan())"]
+    DB["MongoDB<br/>(auto-instrumented: mongodb driver)"]
+
+    HTTP --> Route --> Svc --> DB
+```
+
+**Why three different instrumentation strategies for one waterfall?** The
+outer three (HTTP/Express/MongoDB) are all real libraries `require()`d by
+the app — OpenTelemetry's Node auto-instrumentation patches them at
+require-time (see `tracing.ts`'s own comment on why it MUST be the first
+import in `index.ts`), so those spans appear with zero application code
+written for them. The **Service** layer is different: it's plain
+TypeScript function calls, nothing to monkey-patch — so it's invisible in
+a trace unless something wraps it in a span on purpose. `observability/
+otel.ts` exports a small `withSpan()` helper, used explicitly around
+`ticketService.createTicket`, `ticketService.updateTicketStatus`, and
+`dashboardService.getSummary`/`getAnalytics` — one concrete instance of the
+exact chain the spec names, plus the exact route the spec names as the
+thing to investigate for latency.
+
+**Where traces go**: no collector required by default — with
+`OTEL_EXPORTER_OTLP_ENDPOINT` unset, spans print straight to the console
+(true "zero setup"). Set it (or just run `docker compose up`, which wires
+it automatically to the bundled Jaeger service) and traces export over
+OTLP/HTTP to a real trace UI at http://localhost:16686 instead — same code,
+no rebuild, just a different env var.
+
+**Metrics**: `@opentelemetry/exporter-prometheus` starts its own tiny HTTP
+server (`OTEL_METRICS_PORT`, default `9464`) serving `/metrics` in
+Prometheus's scrape format directly — no collector needed either; a real
+Prometheus instance (or Grafana on top of one) can point at it as-is.
+
+**Logs and traces are correlated automatically**, not just conceptually
+adjacent: `getNodeAutoInstrumentations()` includes a Pino instrumentation
+that injects the active span's `trace_id`/`span_id` into every structured
+log line for free (verified directly — a real request's log line carries
+both alongside the usual `req`/`res`/`responseTime` fields). In a real
+Jaeger deployment this is what lets you go from "grep the logs for an
+error" to "open the exact trace that produced it" in one step.
+
+**What's NOT done**: a Grafana dashboard visualizing the Prometheus data —
+the metrics endpoint exists and is scrape-ready, wiring an actual Grafana
+service into `docker-compose.yml` was judged lower-value than the tracing
+work itself for the time available.
 
 ## Authentication flow
 

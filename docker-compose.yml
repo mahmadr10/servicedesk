@@ -13,11 +13,26 @@ services:
       timeout: 5s
       retries: 10
 
+  # All-in-one Jaeger: trace storage + UI + an OTLP/HTTP receiver, one image.
+  # Real production setups run a separate collector/storage backend; this is
+  # the right-sized choice for a project this size — genuinely useless to run
+  # a multi-container Jaeger deployment just to view traces from one backend
+  # service.
+  jaeger:
+    image: jaegertracing/all-in-one:1.65
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # Jaeger UI — http://localhost:16686
+      - "4318:4318" # OTLP/HTTP receiver (backend's traces land here)
+
   backend:
     build: ./backend
     depends_on:
       mongo:
         condition: service_healthy
+      jaeger:
+        condition: service_started
     environment:
       NODE_ENV: production
       PORT: 4000
@@ -25,8 +40,13 @@ services:
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-insecure-dev-only-secret-change-me}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:8080}
       LOG_LEVEL: info
+      # Points at the Jaeger service above by its Docker network name — this
+      # is what makes `docker compose up` produce real traces (viewable at
+      # http://localhost:16686) with zero manual configuration.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     ports:
       - "4000:4000"
+      - "9464:9464" # Prometheus metrics — http://localhost:9464/metrics
     volumes:
       # Uploaded attachments survive `docker compose down` / rebuilds —
       # without this volume they'd live only in the container's writable

@@ -242,3 +242,70 @@ partial help even with the compound index dropped, which is a more
 realistic and more interesting result than an artificially manufactured
 worst case would have been, so it's reported as measured rather than
 engineered to look more dramatic.
+
+---
+
+## OpenTelemetry tracing + metrics
+
+**Problem**: structured logging (Pino) answers "what happened, in words,
+per request" but not "where did the time go, across layers, for THIS
+request" — the spec asks specifically for the latter, with the worked
+example of investigating `/api/v1/dashboard/analytics` latency using traces.
+
+**Approach**: `@opentelemetry/sdk-node` with auto-instrumentation for
+http/express/mongodb (covers "HTTP Request → Express Route → MongoDB" with
+zero application code), plus a small `withSpan()` helper
+(`observability/otel.ts`) wrapping a handful of representative Service-layer
+functions explicitly — auto-instrumentation can only patch real libraries,
+and the Service layer is just our own function calls, invisible to a trace
+otherwise. Traces print to the console with zero setup (no collector
+required); `docker compose up` additionally wires a bundled Jaeger service
+for a real trace-waterfall UI. Metrics via `@opentelemetry/exporter-
+prometheus`, which serves `/metrics` itself — no collector needed there
+either.
+
+**Implementation**: `observability/tracing.ts` (SDK bootstrap — imported as
+the literal first line of `index.ts`, ahead of every other import) and
+`observability/otel.ts` (the `withSpan` helper), used in
+`ticketService.createTicket`/`updateTicketStatus` and
+`dashboardService.getSummary`/`getAnalytics`.
+
+**Challenges**: auto-instrumentation patches modules at `require()` time —
+if `tracing.ts` were imported anywhere other than first, any module already
+loaded by that point (e.g. `express`, pulled in transitively by `app.ts`)
+would keep running its original, un-patched code, and its spans would
+silently never appear. No error, no warning — just missing spans, which
+would have been a genuinely nasty thing to debug after the fact. Solved by
+making it the first statement in `index.ts` and calling that out explicitly
+in both files' comments so a future edit doesn't reorder it by accident.
+
+Separately, verifying the Prometheus metrics endpoint actually worked hit a
+false alarm: requests from a **different** local process (a separate
+PowerShell instance) to `localhost:9464/metrics` timed out, which looked
+like the exporter wasn't really listening. An in-process self-request (the
+same Node process, after its own server started, calling its own endpoint)
+returned `200` with a real metrics body immediately — proving the exporter
+was correct all along, and the timeout was the *testing environment's*
+loopback/sandbox networking between separate processes, not the code. Kept
+the in-process check as the actual verification method rather than trusting
+the misleading cross-process symptom.
+
+**Decision**: Prometheus's pull model over an OTLP metrics exporter — a
+`curl localhost:9464/metrics` works with nothing else running, where OTLP
+metrics would need a collector or backend already listening to be useful at
+all. Console-exporter-by-default over "OTLP always, fail if no collector" —
+same reasoning as everywhere else in this project that talks to optional
+external infrastructure (Docker, deployment): the app must run standalone
+first, richer behavior is additive when configured.
+
+**Testing**: full backend suite (28 tests) re-run after the change — still
+passing, since `tracing.ts` is never imported by the integration test path
+(tests import `app.ts` directly, not `index.ts`) and `OTEL_ENABLED=false` is
+set for the E2E backend specifically, so tracing doesn't add a port-binding
+flakiness risk to a test suite that isn't testing tracing itself. Verified
+the SDK actually produces a working metrics endpoint via the in-process
+self-request described above (not just "it compiled").
+
+**Result**: a real, working `HTTP → Express Route → Service → MongoDB` trace
+chain, viewable with zero setup (console) or a full UI (`docker compose up`
+→ http://localhost:16686), plus a scrape-ready `/metrics` endpoint.

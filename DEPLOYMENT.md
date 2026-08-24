@@ -27,6 +27,9 @@
 | `JWT_REFRESH_COOKIE_NAME` | no (default `refreshToken`) | |
 | `FRONTEND_ORIGIN` | no (default `http://localhost:5173`) | Must match the frontend's real URL in production, for CORS + cookie scoping |
 | `LOG_LEVEL` | no (default `info`) | Pino level: `trace\|debug\|info\|warn\|error\|fatal` |
+| `OTEL_ENABLED` | no (default `true`) | Set `false` to disable OpenTelemetry entirely |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | no (unset = console) | e.g. `http://localhost:4318` for a local Jaeger/collector; unset prints traces to the console instead |
+| `OTEL_METRICS_PORT` | no (default `9464`) | Prometheus metrics served at `/metrics` on this port |
 
 ### `frontend/.env` (build-time — see note below)
 
@@ -46,12 +49,17 @@ Set them correctly *before* running `npm run build` / the Docker build.
 docker compose up
 ```
 
-Starts a local MongoDB + backend + frontend together. See root
+Starts a local MongoDB + backend + frontend **+ Jaeger** together. See root
 `docker-compose.yml` and `.env.example` for overriding any of the above
 (e.g. pointing `MONGODB_URI` at a real Atlas cluster instead of the bundled
 local Mongo). Details on the container design (multi-stage builds, non-root
 user, volumes) are commented directly in `backend/Dockerfile` and
 `frontend/Dockerfile`.
+
+Once up: traces at http://localhost:16686 (Jaeger UI — click a trace and
+you'll see `HTTP → Express → Service → MongoDB` spans nested, per
+[ARCHITECTURE.md](ARCHITECTURE.md#observability)), metrics at
+http://localhost:9464/metrics.
 
 > This was written carefully but not run end-to-end in the environment this
 > project was built in (Docker wasn't installed there). Run
@@ -79,7 +87,11 @@ session. What's already in place to make it a short process:
 [Fly.io](https://fly.io) can build directly from `backend/Dockerfile` —
 point them at this repo, set the environment variables from the table
 above, and they build the image and run it. No local Docker needed on your
-end; the platform builds it in the cloud from the same Dockerfile.
+end; the platform builds it in the cloud from the same Dockerfile. There's
+no bundled Jaeger on a platform like this (that's a `docker-compose.yml`
+convenience for local dev) — leave `OTEL_EXPORTER_OTLP_ENDPOINT` unset and
+traces print to the platform's own log stream instead, or point it at a
+real hosted OTel backend (Grafana Cloud, Honeycomb, etc.) if you have one.
 
 **Frontend**: two options —
 1. **Static hosting** (Vercel/Netlify/Cloudflare Pages): point at

@@ -30,6 +30,11 @@ async function main() {
       JWT_ACCESS_SECRET: "e2e-test-secret-not-for-production",
       FRONTEND_ORIGIN: "http://localhost:5175",
       LOG_LEVEL: "warn",
+      // No collector running in the E2E environment, and binding the
+      // Prometheus metrics port repeatedly across test runs is just a
+      // source of flakiness this suite doesn't need — tracing itself isn't
+      // what these tests are verifying.
+      OTEL_ENABLED: "false",
     },
   });
 

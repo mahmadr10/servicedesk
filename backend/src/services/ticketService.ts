@@ -8,6 +8,7 @@ import * as userRepo from "../repositories/userRepository";
 import { findCategoryByName } from "../repositories/categoryRepository";
 import { getSlaMinutesForPriority, addMinutes, computeSlaStatus } from "./slaService";
 import { logAction } from "./auditLogService";
+import { withSpan } from "../observability/otel";
 
 // ── The state machine ──────────────────────────────────────────────────
 // Unlike the earlier linear version, this graph BRANCHES: an IN_PROGRESS
@@ -101,41 +102,47 @@ function withSla(ticket: ITicket) {
 }
 
 export async function createTicket(customerId: string, input: CreateTicketInput) {
-  const category = await findCategoryByName(input.category);
-  if (!category) {
-    throw new AppError(400, "INVALID_CATEGORY", `Unknown or inactive category: ${input.category}`);
-  }
+  return withSpan(
+    "ticketService.createTicket",
+    async () => {
+      const category = await findCategoryByName(input.category);
+      if (!category) {
+        throw new AppError(400, "INVALID_CATEGORY", `Unknown or inactive category: ${input.category}`);
+      }
 
-  const { responseMinutes, resolutionMinutes } = await getSlaMinutesForPriority(input.priority);
-  const now = new Date();
-  const ticketNumber = await ticketRepo.nextTicketNumber();
+      const { responseMinutes, resolutionMinutes } = await getSlaMinutesForPriority(input.priority);
+      const now = new Date();
+      const ticketNumber = await ticketRepo.nextTicketNumber();
 
-  const ticket = await ticketRepo.createTicket({
-    ticketNumber,
-    title: input.title,
-    description: input.description,
-    category: category.name,
-    priority: input.priority,
-    tags: input.tags,
-    status: "OPEN",
-    customer: customerId as any,
-    assignedAgent: null,
-    responseDeadline: addMinutes(now, responseMinutes),
-    resolutionDeadline: addMinutes(now, resolutionMinutes),
-    firstResponseAt: null,
-    resolvedAt: null,
-  });
+      const ticket = await ticketRepo.createTicket({
+        ticketNumber,
+        title: input.title,
+        description: input.description,
+        category: category.name,
+        priority: input.priority,
+        tags: input.tags,
+        status: "OPEN",
+        customer: customerId as any,
+        assignedAgent: null,
+        responseDeadline: addMinutes(now, responseMinutes),
+        resolutionDeadline: addMinutes(now, resolutionMinutes),
+        firstResponseAt: null,
+        resolvedAt: null,
+      });
 
-  await logAction({
-    actor: customerId,
-    action: "TICKET_CREATED",
-    entity: "Ticket",
-    entityId: ticket._id.toString(),
-    newValue: { title: ticket.title, priority: ticket.priority, category: ticket.category },
-  });
+      await logAction({
+        actor: customerId,
+        action: "TICKET_CREATED",
+        entity: "Ticket",
+        entityId: ticket._id.toString(),
+        newValue: { title: ticket.title, priority: ticket.priority, category: ticket.category },
+      });
 
-  emitNewTicket(ticket);
-  return withSla(ticket);
+      emitNewTicket(ticket);
+      return withSla(ticket);
+    },
+    { "ticket.priority": input.priority, "ticket.category": input.category }
+  );
 }
 
 export async function listTickets(user: JwtPayload, query: ListTicketsQuery) {
@@ -186,41 +193,47 @@ export async function getTicketById(ticketId: string, user: JwtPayload) {
 }
 
 export async function updateTicketStatus(ticketId: string, requestedStatus: TicketStatus, user: JwtPayload) {
-  const ticket = await findTicketDocOr404(ticketId);
+  return withSpan(
+    "ticketService.updateTicketStatus",
+    async () => {
+      const ticket = await findTicketDocOr404(ticketId);
 
-  if (!isTransitionAllowedForActor(ticket, user, requestedStatus)) {
-    if (!isLegalTransition(ticket.status, requestedStatus)) {
-      throw new AppError(
-        400,
-        "INVALID_STATUS_TRANSITION",
-        `A ticket cannot move from ${ticket.status} directly to ${requestedStatus}.`
-      );
-    }
-    throw new AppError(403, "FORBIDDEN", `You are not allowed to move this ticket to ${requestedStatus}.`);
-  }
+      if (!isTransitionAllowedForActor(ticket, user, requestedStatus)) {
+        if (!isLegalTransition(ticket.status, requestedStatus)) {
+          throw new AppError(
+            400,
+            "INVALID_STATUS_TRANSITION",
+            `A ticket cannot move from ${ticket.status} directly to ${requestedStatus}.`
+          );
+        }
+        throw new AppError(403, "FORBIDDEN", `You are not allowed to move this ticket to ${requestedStatus}.`);
+      }
 
-  const oldStatus = ticket.status;
-  ticket.status = requestedStatus;
+      const oldStatus = ticket.status;
+      ticket.status = requestedStatus;
 
-  if (requestedStatus === "RESOLVED") ticket.resolvedAt = new Date();
-  // Reopening clears the old resolution timestamp — it's unresolved again,
-  // so the resolution SLA clock (relative to createdAt) resumes ticking.
-  if (requestedStatus === "OPEN") ticket.resolvedAt = null;
+      if (requestedStatus === "RESOLVED") ticket.resolvedAt = new Date();
+      // Reopening clears the old resolution timestamp — it's unresolved again,
+      // so the resolution SLA clock (relative to createdAt) resumes ticking.
+      if (requestedStatus === "OPEN") ticket.resolvedAt = null;
 
-  await ticket.save();
+      await ticket.save();
 
-  await logAction({
-    actor: user.userId,
-    action: "STATUS_CHANGED",
-    entity: "Ticket",
-    entityId: ticket._id.toString(),
-    oldValue: oldStatus,
-    newValue: requestedStatus,
-  });
+      await logAction({
+        actor: user.userId,
+        action: "STATUS_CHANGED",
+        entity: "Ticket",
+        entityId: ticket._id.toString(),
+        oldValue: oldStatus,
+        newValue: requestedStatus,
+      });
 
-  const populated = await ticketRepo.findTicketById(ticketId);
-  emitTicketUpdated(populated!);
-  return withSla(populated!);
+      const populated = await ticketRepo.findTicketById(ticketId);
+      emitTicketUpdated(populated!);
+      return withSla(populated!);
+    },
+    { "ticket.id": ticketId, "ticket.requestedStatus": requestedStatus }
+  );
 }
 
 export async function assignTicketToSelf(ticketId: string, agent: JwtPayload) {
