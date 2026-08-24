@@ -1,2 +1,19 @@
 .env
 node_modules/
+
+# Installers / large local-only binaries — never belong in a git repo
+*.exe
+
+# Build output
+dist/
+build/
+
+# Uploaded ticket attachments (local dev storage — not source)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Test/coverage artifacts
+coverage/
+playwright-report/
+test-results/
+*.log
