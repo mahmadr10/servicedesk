@@ -224,6 +224,73 @@ sequenceDiagram
     Note over Log,B: on error: errorHandler catches it,<br/>logs full detail, returns { success:false, error, requestId }
 ```
 
+## AI Dev Assistant
+
+A second, separate AI feature from Ticket AI Assist above — an internal
+developer/admin tool, not part of the ticket workflow. `POST
+/admin/dev-assistant/ask` (Admin-only) takes a free-text question about
+*this codebase* ("Why are ticket updates sometimes duplicated?", "Where is
+authentication implemented?") and runs a real multi-agent LangGraph
+investigation:
+
+```mermaid
+flowchart LR
+    START((START)) --> plan["plan<br/>(orchestrator — LLM picks<br/>which agents are relevant)"]
+    plan -->|selected| repo["repoAgent<br/>(searches TS source)"]
+    plan -->|selected| git["gitAgent<br/>(recent commit history)"]
+    plan -->|selected| log["logAgent<br/>(recent structured logs)"]
+    plan -->|selected| test["testAgent<br/>(runs the REAL test suite)"]
+    repo --> diagnosis["diagnosisAgent<br/>(synthesizes a root-cause<br/>hypothesis + next step)"]
+    git --> diagnosis
+    log --> diagnosis
+    test --> diagnosis
+    diagnosis --> END((END))
+```
+
+**Only the agents the planner actually selects run at all** — asking a
+general architecture question doesn't spin up a ~10-15s test run; asking
+about a bug does. This is a genuine planning step (an LLM call with
+structured output choosing a subset of `["repo","git","log","test"]`), not
+a fixed pipeline dressed up as "planning." Verified live: "why are ticket
+updates duplicated" correctly selected `repo` + `log` and skipped `git`/
+`test`; "where is authentication implemented" correctly selected just
+`repo`.
+
+**Structural safety boundary, not a prompt instruction**: every tool in
+`ai/devAssistant/tools.ts` is read-only — repo search (pure in-memory grep,
+no shell-out), git log/diff (read commands only), log search (reads an
+in-memory ring buffer), test run (executes the suite but writes nothing).
+There is no write/patch/apply tool anywhere in this file for the graph to
+call, so "the AI accidentally edits source" isn't a risk an LLM could be
+talked into by a cleverly-worded question — the capability simply doesn't
+exist in the tool set. It investigates and recommends; a human applies any
+fix. This directly follows the brief's own stated principle: "AI can
+recommend and automate; humans retain control over high-impact actions."
+
+**Live progress over Socket.IO**: each node emits a `devAssistant:step`
+event (`{ agent, status: "running"|"done", summary }`) to the asking
+admin's own room as it runs — the frontend's Admin → Dev Assistant page
+renders this as agent boxes lighting up in real time, not a single opaque
+spinner. Reuses the exact real-time infrastructure from the ticket workflow
+(same per-user room pattern as `emitTicketUpdated`), not a parallel system.
+
+**Mock fallback** (`ai/devAssistant/mockOrchestrator.ts`): no `GROQ_API_KEY`
+→ a keyword heuristic picks agents instead of an LLM, and the "diagnosis"
+is the raw findings, clearly labeled as such rather than dressed up as an
+AI opinion — same "must run with zero API key" principle as everywhere
+else AI shows up in this app.
+
+**A real bug this surfaced** (see [BUILD_LOG.md](BUILD_LOG.md) for the full
+story): live testing initially came back "no matches" for a genuinely
+answerable question ("where is authentication implemented" — auth code
+obviously exists) because keyword extraction treated a multi-word phrase as
+one literal substring instead of several OR-able terms, and because real
+code rarely spells out the same words a question would ("authentication"
+vs. the actual `auth.ts`/`JWT`/`login` vocabulary). Fixed with proper
+keyword extraction plus a small synonym table for this codebase's actual
+terminology — not a general semantic search (real added complexity, out of
+scope for a bonus feature), an honest bounded middle ground instead.
+
 ## Observability
 
 Two complementary layers, deliberately not the same thing:

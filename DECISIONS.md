@@ -182,7 +182,39 @@ specifically because the brief asked for something "agentic like
 LangGraph" by name — a deliberate choice to demonstrate the tool, not the
 only reasonable engineering call in isolation.
 
-## 9. Zod for validation, on both frontend and backend, independently
+## 9. AI Dev Assistant: investigate-and-recommend only, never a write/patch tool
+
+**Alternatives considered**: giving the graph a tool to generate and apply a
+code patch directly (the brief's own "AI Engineering Assistant" challenge
+mentions "optionally generate a patch" as a possible step); an "approve
+before applying" UI flow where the LLM drafts a diff and a human clicks
+"apply."
+
+**Why investigate-only**: the brief itself states the governing principle
+directly — "Do not allow the agent to automatically deploy production
+changes... AI can recommend and automate; humans retain control over
+high-impact actions." Applied literally: there is no write/edit/apply tool
+defined anywhere in `ai/devAssistant/tools.ts` for the graph to call. This
+is a structural boundary, not a prompt instruction ("please don't edit
+files") that a sufficiently creative question could talk an LLM out of —
+the capability to write to disk simply isn't wired into this feature's tool
+set, so no prompt injection or model misbehavior can make it happen.
+
+**Why not even the "draft a diff, human approves" middle ground**: real
+engineering effort (safely generating a patch, showing a diff view,
+handling partial/invalid patches, an apply-then-test-then-rollback flow) for
+a feature that's explicitly a bonus on top of a bonus. The investigate-and-
+recommend version demonstrates the interesting part — genuine multi-agent
+orchestration, dynamic planning, tool use, live progress — without taking
+on the real risk and real complexity of an agent that touches source files,
+for a feature scored as a bonus, not core functionality.
+
+**Trade-off**: a user has to manually apply whatever the Diagnosis step
+recommends — this tool answers "what's probably wrong and what should you
+try," never "here's the fix, already applied." That's the intended shape,
+not a limitation to apologize for.
+
+## 10. Zod for validation, on both frontend and backend, independently
 
 **Why Zod**: TypeScript-first — a schema's inferred type (`z.infer<...>`)
 IS the TypeScript type, so a validator and its corresponding type can never

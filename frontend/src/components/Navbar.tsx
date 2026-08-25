@@ -44,6 +44,7 @@ export function Navbar() {
             <NavLink to="/admin/analytics">Analytics</NavLink>
             <NavLink to="/admin/audit-logs">Audit Logs</NavLink>
             <NavLink to="/admin/settings">Settings</NavLink>
+            <NavLink to="/admin/dev-assistant">Dev Assistant</NavLink>
           </>
         )}
         {user && <NavLink to="/profile">Profile</NavLink>}

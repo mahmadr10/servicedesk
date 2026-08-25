@@ -402,3 +402,115 @@ suggestedPriority: "CRITICAL", source: "groq" }` with a coherent,
 context-aware summary and draft reply, not templated filler. Also fully
 functional with zero key (type-checks, lints, all 38 tests pass) for
 anyone cloning the repo without one.
+
+---
+
+## AI Dev Assistant (multi-agent orchestrator)
+
+**Problem**: the ticket AI assistant above answers questions about ONE
+ticket. This is a different, separate ask — a multi-agent orchestrator that
+investigates questions about the CODEBASE ITSELF ("why are ticket updates
+sometimes duplicated?"), agents dispatching to specialized sub-agents and
+reporting back, with an orchestrator synthesizing a final diagnosis —
+autonomous investigation, but explicitly NOT autonomous code changes (see
+[DECISIONS.md](DECISIONS.md#9-ai-dev-assistant-investigate-and-recommend-only-never-a-writepatch-tool)).
+
+**Approach**: a LangGraph with a genuine planning step — an orchestrator
+node uses structured LLM output to decide which of 4 read-only specialist
+agents (repo search, git history, recent logs, the real test suite) are
+actually relevant to the question, only those run (in parallel), and a
+diagnosis node synthesizes their findings into a root-cause hypothesis +
+recommended next step. Every tool is read-only by construction — no
+write/patch tool exists anywhere in the tool set for the graph to call.
+Live per-agent progress streams to the frontend over the existing
+Socket.IO infrastructure (same per-user room pattern the ticket workflow
+already uses), so the UI can show agents lighting up in real time instead
+of one opaque spinner — genuinely useful for a demo, not decoration.
+
+**Implementation**: `ai/devAssistant/tools.ts` (repo search — pure Node
+directory walk, no shell dependency; git log/diff — best-effort, degrades
+gracefully with no `.git`/no `git` binary; log search — reads a new
+in-memory ring buffer; test run — spawns the real `npm test`),
+`ai/devAssistant/orchestratorGraph.ts` (the graph), `ai/devAssistant/
+mockOrchestrator.ts` (no-API-key fallback — keyword heuristic instead of an
+LLM planner, raw findings instead of an LLM diagnosis), `observability/
+logBuffer.ts` (the ring buffer — mirrors every Pino log call via a
+`hooks.logMethod` hook), `services/devAssistantService.ts` (the seam),
+`POST /admin/dev-assistant/ask` (Admin-only, its own tighter rate limit),
+and an Admin → "Dev Assistant" page with a live-updating agent pipeline
+visualization.
+
+**Challenges** — four real bugs, every one found by actually running it
+against the live key and reading what came back, not by inspection:
+
+1. **Node name / state channel name collision.** LangGraph rejected
+   `.addNode("diagnosis", ...)` outright at startup — a node can't share a
+   name with a state field, and `diagnosis` was already the State's output
+   field. Renamed the node to `diagnosisAgent`; the state field stayed
+   `diagnosis`.
+2. **Keyword extraction was fundamentally wrong, not just imperfect.** The
+   first version reduced a whole question down to ONE joined phrase and
+   searched for it as a single literal substring — asking "where is
+   authentication implemented" (a real, answerable question — auth code
+   obviously exists in this repo) came back "no matches," because nothing
+   in the code literally contains the string "where authentication
+   implemented this." Fixed by extracting multiple standalone keywords and
+   matching ANY of them (OR), not the whole phrase as one AND'd string.
+3. **Real code doesn't use the same words a question does.** Even fixed,
+   "authentication" alone still didn't match — the actual file is
+   `auth.ts`, using `JWT`, `login`, `token`, never the literal word
+   "authentication." Added a small synonym table for this specific
+   codebase's actual vocabulary (`authentication` → `auth`, `jwt`, `login`,
+   `token`, etc.) — a deliberate, bounded middle ground, not a claim of
+   real semantic search.
+4. **The Dev Assistant's own comments became the top search result.**
+   Once (2) and (3) were fixed, the top "authentication" match was this
+   tool's OWN code comments explaining the fix (dense with exactly that
+   vocabulary), crowding out the real `authController.ts`/`authService.ts`
+   hits within the match cap. Fixed by excluding the Dev Assistant's own
+   `ai/devAssistant/` directory from repo search results — asking "where is
+   X implemented" should point at application code, not this tool's notes
+   about itself.
+5. **A circular-JSON crash in the Log Agent, caught mid-demo.** A live UI
+   test showed the result badge saying "Live AI (Groq)" while the actual
+   diagnosis text was visibly the MOCK fallback's raw-findings dump — a
+   real, user-visible inconsistency. Backend logs showed the actual cause:
+   `getRecentLogs()`'s `JSON.stringify()` threw `Converting circular
+   structure to JSON` on a stored log entry, because Pino's `hooks.logMethod`
+   runs on the RAW arguments passed to `logger.info()`/etc., BEFORE Pino's
+   own configured `req`/`res` serializers apply (those only run at actual
+   output-serialization time) — so a request-completion log's raw `res`
+   object, with its circular `res.req`/`req...res` reference chain, was
+   getting stored as-is. Fixed by sanitizing every entry through a
+   circular-safe stringify ONCE at store time, so anything read back later
+   is guaranteed safe. Separately fixed the actual bug this exposed: the
+   response's `source` field was computed from "was a key configured"
+   rather than "which path actually ran," so a graph that threw mid-run and
+   correctly fell back to mock still reported `source: "groq"` — a UI
+   showing "Live AI" next to content that's visibly the mock fallback is
+   exactly the kind of quietly-wrong result a demo (or a real user) could
+   be misled by. Fixed by tracking the actual executed path, not inferring
+   it after the fact. (Verified the ticket AI service, built earlier, never
+   had this specific bug — each of its branches already returns its own
+   explicit `source` literal.)
+
+**Testing**: `extractSearchKeywords()` gets dedicated regression unit tests
+for bug #2 specifically (asserts multiple standalone keywords, never one
+joined phrase) and the synonym expansion from bug #3. Full backend suite
+(42 tests total now) passing. Live end-to-end verification via both a
+direct graph invocation AND a real Playwright browser click-through
+(logged in as the seeded admin, asked a real question, screenshotted the
+live agent pipeline mid-run and the final diagnosis) — this is what
+actually caught bug #5, which none of the automated tests would have
+(nothing was asserting that the displayed `source` matched the actual
+displayed content).
+
+**Result**: a genuinely working multi-agent investigation — verified live
+answering both a diagnostic question ("why are ticket updates sometimes
+duplicated," correctly selected repo+log agents, correctly found a real
+burst of duplicate-looking log entries, gave a specific, plausible
+root-cause hypothesis and a concrete next step) and a codebase-navigation
+question ("where is authentication implemented," correctly traced through
+`authController.ts` → `services/authService.ts` → `utils/jwt.ts`). Fully
+functional with zero API key. Runs with zero write access to source files,
+by construction.

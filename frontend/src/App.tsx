@@ -21,6 +21,7 @@ const UsersPage = lazy(() => import("./pages/admin/UsersPage").then((m) => ({ de
 const AnalyticsPage = lazy(() => import("./pages/admin/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
 const AuditLogsPage = lazy(() => import("./pages/admin/AuditLogsPage").then((m) => ({ default: m.AuditLogsPage })));
 const SettingsPage = lazy(() => import("./pages/admin/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const DevAssistantPage = lazy(() => import("./pages/admin/DevAssistantPage").then((m) => ({ default: m.DevAssistantPage })));
 
 function PageFallback() {
   return <p className="mt-8 text-center text-sm text-slate-500">Loading…</p>;
@@ -127,6 +128,14 @@ function AppRoutes() {
           element={
             <ProtectedRoute roles={["ADMIN"]}>
               <SettingsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/dev-assistant"
+          element={
+            <ProtectedRoute roles={["ADMIN"]}>
+              <DevAssistantPage />
             </ProtectedRoute>
           }
         />

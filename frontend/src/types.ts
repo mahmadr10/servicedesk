@@ -109,6 +109,21 @@ export interface TicketAiAnalysis {
   source: "groq" | "mock";
 }
 
+export type DevAssistantAgent = "orchestrator" | "repo" | "git" | "log" | "test" | "diagnosis";
+
+export interface DevAssistantStep {
+  agent: DevAssistantAgent;
+  status: "running" | "done";
+  summary?: string;
+}
+
+export interface DevAssistantResult {
+  selectedAgents: ("repo" | "git" | "log" | "test")[];
+  findings: Record<string, string>;
+  diagnosis: string;
+  source: "groq" | "mock";
+}
+
 export interface AuditLogEntry {
   _id: string;
   actor: User | string | null;

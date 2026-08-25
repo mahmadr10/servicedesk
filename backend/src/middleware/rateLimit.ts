@@ -34,3 +34,18 @@ export const authLimiter = rateLimit({
     throw new AppError(429, "RATE_LIMITED", "Too many attempts. Please try again later.");
   },
 });
+
+// The AI Dev Assistant can trigger multiple LLM calls AND a real test suite
+// run (~10-15s) per question — genuinely expensive compared to a normal CRUD
+// request, so this is deliberately tighter than the general limiter even
+// though it's already Admin-only.
+export const devAssistantLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: isTestEnv,
+  handler: () => {
+    throw new AppError(429, "RATE_LIMITED", "Too many Dev Assistant queries. Please wait before asking another.");
+  },
+});

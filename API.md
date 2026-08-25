@@ -115,6 +115,7 @@ All routes below require `requireAuth` + `requireRole("ADMIN")`.
 | PATCH | `/admin/categories/:id` | `{ isActive }` |
 | GET | `/admin/sla-policies` | Current policy per priority |
 | PUT | `/admin/sla-policies/:priority` | `{ responseMinutes, resolutionMinutes }` (upsert) |
+| POST | `/admin/dev-assistant/ask` | `{ question }` — multi-agent codebase investigator. Returns `{ selectedAgents, findings, diagnosis, source: "groq"\|"mock" }`. Tighter rate limit (10/15min) — see [ARCHITECTURE.md](ARCHITECTURE.md#ai-dev-assistant) |
 
 ## Audit Logs
 
@@ -137,6 +138,7 @@ Connect with `io(url, { auth: { token: accessToken } })`. Events received:
 |---|---|---|
 | `ticket:created` | full ticket | A customer creates a ticket (sent to the `agents` room) |
 | `ticket:updated` | full ticket | Status change, assignment, reassignment, or priority change (sent to the ticket's customer AND the `agents` room) |
+| `devAssistant:step` | `{ agent, status, summary? }` | Live progress from an in-flight `POST /admin/dev-assistant/ask` — sent only to the asking admin's own room, not broadcast |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how the authentication and room
 model prevent duplicate/ghost updates.

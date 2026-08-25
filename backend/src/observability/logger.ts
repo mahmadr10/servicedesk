@@ -1,5 +1,6 @@
 import pino from "pino";
 import { isProduction } from "../config/env";
+import { pushLogEntry } from "./logBuffer";
 
 // One shared, structured logger for the whole backend. "Structured" means
 // every log line is a JSON object with consistent fields (timestamp,
@@ -19,6 +20,24 @@ export const logger = pino({
     // "[Redacted]" rather than ever reaching a log file or log aggregator.
     paths: ["req.headers.authorization", "req.headers.cookie", "*.password", "*.passwordHash", "*.token"],
     censor: "[Redacted]",
+  },
+  // Mirrors every log call into the in-memory ring buffer (logBuffer.ts) —
+  // runs BEFORE serialization/output, so it works the same whether we're
+  // pretty-printing to the console (dev) or emitting raw JSON (prod), and
+  // regardless of `transport` config. try/catch because a bug in the buffer
+  // must never be the thing that breaks actual application logging.
+  hooks: {
+    logMethod(inputArgs: unknown[], method: (...args: unknown[]) => void, level: number) {
+      try {
+        const [first, second] = inputArgs;
+        const mergingObject = typeof first === "object" && first !== null ? (first as Record<string, unknown>) : {};
+        const msg = typeof first === "string" ? first : typeof second === "string" ? second : "";
+        pushLogEntry({ time: Date.now(), level, msg, ...mergingObject });
+      } catch {
+        // never let buffering itself break logging
+      }
+      return method.apply(this, inputArgs as [never, ...never[]]);
+    },
   },
   transport: isProduction
     ? undefined

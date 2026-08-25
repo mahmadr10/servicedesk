@@ -20,6 +20,10 @@ export const setCategoryActiveSchema = z.object({
   isActive: z.boolean(),
 });
 
+export const askDevAssistantSchema = z.object({
+  question: z.string().trim().min(5, "Ask a real question (min 5 characters).").max(500),
+});
+
 export const upsertSlaPolicySchema = z.object({
   responseMinutes: z.coerce.number().int().min(1),
   resolutionMinutes: z.coerce.number().int().min(1),

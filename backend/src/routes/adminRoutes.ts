@@ -2,12 +2,14 @@ import { Router } from "express";
 import * as adminController from "../controllers/adminController";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { validate } from "../middleware/validate";
+import { devAssistantLimiter } from "../middleware/rateLimit";
 import {
   listUsersQuerySchema,
   updateUserSchema,
   createCategorySchema,
   setCategoryActiveSchema,
   upsertSlaPolicySchema,
+  askDevAssistantSchema,
 } from "../validators/adminValidators";
 import { mongoIdParamSchema } from "../validators/ticketValidators";
 import { z } from "zod";
@@ -30,6 +32,11 @@ router.patch(
   validate(setCategoryActiveSchema),
   adminController.setCategoryActive
 );
+
+// AI Dev Assistant (multi-agent orchestrator) — investigate-and-recommend
+// only, Admin-only, its own tighter rate limit (see middleware/rateLimit.ts
+// for why). See services/devAssistantService.ts and ai/devAssistant/.
+router.post("/dev-assistant/ask", devAssistantLimiter, validate(askDevAssistantSchema), adminController.askDevAssistant);
 
 router.get("/sla-policies", adminController.listSlaPolicies);
 router.put(

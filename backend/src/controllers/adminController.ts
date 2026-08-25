@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import * as adminService from "../services/adminService";
+import * as devAssistantService from "../services/devAssistantService";
 
 export async function listUsers(req: Request, res: Response) {
   const { role, page, limit } = req.query as any;
@@ -10,6 +11,11 @@ export async function listUsers(req: Request, res: Response) {
 export async function updateUser(req: Request, res: Response) {
   const user = await adminService.updateUser(req.params.id as string, req.body, req.user!);
   res.status(200).json({ success: true, data: { user } });
+}
+
+export async function askDevAssistant(req: Request, res: Response) {
+  const result = await devAssistantService.askDevAssistant(req.body.question, req.user!);
+  res.status(200).json({ success: true, data: result });
 }
 
 export async function listCategories(_req: Request, res: Response) {

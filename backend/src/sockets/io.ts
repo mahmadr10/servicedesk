@@ -26,3 +26,17 @@ export function emitNewTicket(ticket: ITicket) {
   if (!ioInstance) return;
   ioInstance.to("agents").emit("ticket:created", ticket.toJSON());
 }
+
+// Streams the AI Dev Assistant's live progress to the ONE admin who asked
+// the question (their own "user:<id>" room — same room every other
+// per-user event already uses) — not broadcast to "agents", since this is
+// that one admin's own investigation, not something every agent needs to
+// see. This is what lets the frontend show agents "lighting up" in
+// real time instead of a single blocking spinner.
+export function emitDevAssistantStep(
+  userId: string,
+  step: { agent: string; status: "running" | "done"; summary?: string }
+) {
+  if (!ioInstance) return;
+  ioInstance.to(`user:${userId}`).emit("devAssistant:step", step);
+}

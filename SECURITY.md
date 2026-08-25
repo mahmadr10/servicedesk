@@ -124,6 +124,31 @@ being explicit about:
   review Groq's own data-retention/training-use policy before enabling this
   feature, the same as any third-party LLM API integration.
 
+## AI Dev Assistant: additional boundaries
+
+Beyond AI Assist's data-handling notes above, this is an internal
+developer/admin tool with its own specific hardening:
+
+- **Admin-only** — the route requires `requireRole("ADMIN")`, same as every
+  other `/admin/*` endpoint. Agents and customers cannot reach it.
+- **Structurally read-only** — there is no write/edit/apply tool defined in
+  `ai/devAssistant/tools.ts` for the LLM to call. This is enforced by what
+  functions exist in the code, not by a prompt telling the model not to
+  write files — no prompt injection via a cleverly-worded question can grant
+  a capability that was never wired in.
+- **Its own tighter rate limit** (`devAssistantLimiter`, 10 requests /
+  15 min) — separate from the general API limiter, because a single question
+  can trigger multiple LLM calls and a real ~10-15s test suite run, making
+  it meaningfully more expensive per-request than ordinary CRUD traffic.
+- **Repo search never touches secrets** — it only reads `.ts`/`.tsx` source
+  files under `backend/src`/`frontend/src`; `.env` files, `node_modules`,
+  and dotfiles/dot-directories are excluded by the same walk that skips
+  `node_modules`.
+- **Live progress is scoped to the asking admin only** — `devAssistant:step`
+  events go to that admin's own `user:<id>` Socket.IO room, not broadcast to
+  the shared `agents` room, so one admin's in-progress investigation (which
+  could reference internal log contents) isn't visible to others by default.
+
 ## Error handling
 
 Centralized (`middleware/errorHandler.ts`): every error becomes

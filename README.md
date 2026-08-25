@@ -55,6 +55,17 @@ changes to everyone watching a ticket, without a page refresh.
   Implemented as a replaceable service abstraction (`services/aiService.ts`)
   — nothing outside that one file knows LangGraph or Groq exist. Details:
   [ARCHITECTURE.md](ARCHITECTURE.md#ai-assist).
+- **AI Dev Assistant**: a second, separate AI feature — an internal
+  developer tool (Admin-only) at `/admin/dev-assistant`. Ask a question
+  about the codebase ("Why are ticket updates sometimes duplicated?") and a
+  LangGraph orchestrator plans which read-only specialist agents are
+  relevant (repo search, git history, recent logs, the real test suite),
+  runs them, and synthesizes a diagnosis + recommendation — live agent
+  progress streams over Socket.IO as it happens. Structurally
+  investigate-and-recommend only: there is no write/patch tool anywhere in
+  its tool set for it to call, so it cannot edit code itself, by
+  construction, not just by instruction. Same mock fallback principle —
+  runs with zero API key. Details: [ARCHITECTURE.md](ARCHITECTURE.md#ai-dev-assistant).
 - **Validation**: Zod on every request body/params/query, both ends.
 - **Security**: password hashing (bcrypt), rate limiting, Helmet security
   headers, centralized error handling (no stack traces to the client),
