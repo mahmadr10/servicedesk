@@ -10,6 +10,7 @@
     "test": "vitest run",
     "lint": "eslint .",
     "seed:users": "tsx src/scripts/seedDemoUsers.ts",
+    "seed:demo": "tsx src/scripts/seedDemoTickets.ts",
     "seed:perf": "tsx src/scripts/seedPerformanceData.ts",
     "benchmark": "tsx src/scripts/benchmarkQuery.ts"
   },

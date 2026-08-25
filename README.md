@@ -115,7 +115,12 @@ npm install
 npm run dev
 ```
 Runs on http://localhost:4000. First boot auto-seeds default categories and
-SLA policies. Optionally seed demo accounts: `npm run seed:users`.
+SLA policies. Optionally seed demo accounts: `npm run seed:users` (3
+accounts, one per role — credentials printed to the console), then
+`npm run seed:demo` for a curated spread of ~15 realistic tickets across
+every status/priority/category (distinct from `npm run seed:perf`'s 10,000
+random rows, which exist for query benchmarking, not for a dashboard that
+looks like anything before you've clicked a single button).
 
 **3. Frontend:**
 ```bash
