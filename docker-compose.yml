@@ -44,6 +44,10 @@ services:
       # is what makes `docker compose up` produce real traces (viewable at
       # http://localhost:16686) with zero manual configuration.
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      # Unset by default (empty string) — the AI Assist feature runs its
+      # mock fallback until you export GROQ_API_KEY in your shell before
+      # `docker compose up`, or set it in a root .env file (see .env.example).
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
     ports:
       - "4000:4000"
       - "9464:9464" # Prometheus metrics — http://localhost:9464/metrics

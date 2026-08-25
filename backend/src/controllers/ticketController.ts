@@ -57,6 +57,11 @@ export async function uploadAttachment(req: Request, res: Response) {
   res.status(201).json({ success: true, data: { ticket } });
 }
 
+export async function analyzeWithAi(req: Request, res: Response) {
+  const analysis = await ticketService.getAiAnalysis(req.params.id as string, req.user!);
+  res.status(200).json({ success: true, data: { analysis } });
+}
+
 export async function downloadAttachment(req: Request, res: Response) {
   const ticket = await ticketService.getTicketDocForDownload(req.params.id as string, req.user!);
   const attachment = ticket.attachments.find((a) => a._id?.toString() === req.params.attachmentId);

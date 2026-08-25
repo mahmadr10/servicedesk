@@ -309,3 +309,96 @@ self-request described above (not just "it compiled").
 **Result**: a real, working `HTTP → Express Route → Service → MongoDB` trace
 chain, viewable with zero setup (console) or a full UI (`docker compose up`
 → http://localhost:16686), plus a scrape-ready `/metrics` endpoint.
+
+---
+
+## AI ticket assistant (LangGraph + Groq)
+
+**Problem**: the spec's optional AI bonus feature — ticket summarization/
+classification — explicitly requested as a real agentic pipeline (LangGraph
+by name), not a single prompt call, with a Groq API key provided to test it
+live and a hard requirement that the app still runs with zero API key.
+
+**Approach**: a genuine fan-out/fan-in LangGraph — `classify` (structured
+category+priority output) and `summarize` run in parallel (both only need
+the raw title/description), then both feed `draftResponse` (which needs
+both outputs to write a coherent reply). Wrapped behind one function,
+`aiService.analyzeTicket()` — the "replaceable service abstraction" the
+spec asks for — so nothing outside that one file imports LangGraph or Groq
+directly. A deterministic keyword-based mock (`ai/mockAnalyzer.ts`) runs
+automatically whenever no `GROQ_API_KEY` is configured, including in CI.
+
+**Implementation**: `ai/ticketAnalysisGraph.ts` (the graph),
+`ai/mockAnalyzer.ts` (the fallback), `services/aiService.ts` (the seam),
+a new staff-only `POST /tickets/:id/ai-analyze` endpoint, and an "AI
+Assist" panel on the ticket detail page (Agent/Admin only — a customer
+shouldn't see internal triage suggestions) with one-click "apply suggested
+priority" and "use as reply" actions.
+
+**Challenges** — three real bugs, found by actually running it against a
+live key rather than stopping at "it compiles and the mock path works":
+
+1. TypeScript's `Node16` module resolution rejected a dynamic
+   `import("../ai/ticketAnalysisGraph")` at **compile time** ("relative
+   import paths need explicit file extensions") — fixed by writing the
+   specifier as `ticketAnalysisGraph.js`, the Node16/NodeNext convention
+   (refers to the future compiled file regardless of the source's actual
+   `.ts` extension).
+2. That fix compiled clean but was silently wrong at **runtime**: `tsx`'s
+   dev-time module resolver does not remap a `.js`-suffixed dynamic-import
+   specifier back to the real `.ts` file the way static imports do under
+   this project's CommonJS setup. Every real-mode call was throwing
+   `ERR_MODULE_NOT_FOUND` inside the `try/catch` and silently falling back
+   to mock — the endpoint kept returning `200` with plausible-looking data
+   the whole time, which is exactly the dangerous kind of failure (no
+   error surfaced anywhere a user or a quick smoke test would notice).
+   Caught only by explicitly asserting `source === "groq"` during live
+   verification, not by the response merely "looking right." Root cause:
+   the lazy-import design wasn't actually load-bearing (the module has no
+   expensive side effects at import time — `ChatGroq` instances are built
+   inside functions, not at module scope), so the fix was to make it a
+   plain static import and drop the lazy-loading premise entirely, rather
+   than chase `tsx`'s resolver behavior further.
+3. Once real requests were actually reaching Groq, they came back `404
+   model_not_found` for the originally-chosen `llama-3.3-70b-versatile` —
+   that model lineup has been retired on Groq's side since this was
+   written. Fixed by querying `https://api.groq.com/openai/v1/models`
+   directly with the real key to see the CURRENT live lineup rather than
+   guess from memory, and switching the default to `openai/gpt-oss-120b`
+   (confirmed to support structured output, which `classify` depends on).
+
+Separately (lower stakes): two of the mock analyzer's own unit tests failed
+on first run — not a bug in the analyzer, a bug in the test wording: a test
+asserting `MEDIUM` default behavior used the word "Question" in its ticket
+title, which the analyzer's own (correct) LOW-priority keyword list
+matches. Fixed by rewording the test fixtures rather than loosening the
+keyword rules to accommodate a coincidentally-bad test string.
+
+And once a real `GROQ_API_KEY` existed in the local `.env` for live testing,
+the integration test asserting `source === "mock"` started failing — it had
+implicitly depended on nobody's local environment having a real key, which
+is exactly the kind of hidden coupling that makes a test suite behave
+differently on different machines. Fixed properly, not papered over: added
+an explicit `process.env.AI_ENABLED = "false"` in `test/globalSetup.ts`, so
+the integration suite deterministically exercises the mock path regardless
+of what's in any given developer's `.env` — matching CI's actual
+(genuinely-no-key) condition on purpose, rather than by accident.
+
+**Decision**: see [DECISIONS.md](DECISIONS.md#8-langgraph-over-a-single-llm-call-for-the-ai-ticket-assistant-with-groq-as-the-model-provider)
+for the full graph-vs-single-call and Groq-vs-OpenAI reasoning.
+
+**Testing**: `mockAnalyzeTicket()` gets its own unit tests (priority
+keyword matching including the CRITICAL/HIGH/LOW/MEDIUM-default paths,
+category fallback behavior) since it's the path CI and any API-key-less run
+actually exercises — not an untested stub. Integration tests cover the real
+HTTP endpoint end to end (agent gets a `mock`-sourced analysis; a customer
+gets `403`), now deterministically forced onto the mock path (see above)
+regardless of local environment.
+
+**Result**: verified working end to end against the real Groq API — a
+ticket titled "Payment API returns 500" / "checkout is completely down for
+every customer" came back `{ suggestedCategory: "Payment",
+suggestedPriority: "CRITICAL", source: "groq" }` with a coherent,
+context-aware summary and draft reply, not templated filler. Also fully
+functional with zero key (type-checks, lints, all 38 tests pass) for
+anyone cloning the repo without one.

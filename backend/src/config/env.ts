@@ -24,6 +24,20 @@ const envSchema = z.object({
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
   OTEL_METRICS_PORT: z.string().default("9464"),
   OTEL_SERVICE_NAME: z.string().default("servicedesk-backend"),
+
+  // AI ticket assistant (spec's optional bonus feature) — see
+  // ai/ticketAnalysisGraph.ts and services/aiService.ts. GROQ_API_KEY absent
+  // (or AI_ENABLED=false) means the app runs a deterministic mock analyzer
+  // instead of calling out to an LLM — the app must work with zero API key.
+  AI_ENABLED: z.enum(["true", "false"]).default("true"),
+  GROQ_API_KEY: z.string().optional(),
+  // Groq's model lineup changes over time (the Llama 3.x models this
+  // originally targeted were retired) — verified live against
+  // https://api.groq.com/openai/v1/models during development; gpt-oss-120b
+  // explicitly supports structured output, which the classify node relies
+  // on. Override via AI_MODEL if this one is retired too — check that
+  // endpoint (with your own key) for the current lineup.
+  AI_MODEL: z.string().default("openai/gpt-oss-120b"),
 });
 
 const parsed = envSchema.safeParse(process.env);

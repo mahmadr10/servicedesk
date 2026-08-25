@@ -77,6 +77,7 @@ refresh cookie). `role: "ADMIN"` is rejected on registration — see
 | PATCH | `/tickets/:id/tags` | Agent/Admin | `{ tags: string[] }` |
 | POST | `/tickets/:id/assign` | Agent | Assigns the caller to the ticket (only legal from `TRIAGED`) |
 | POST | `/tickets/:id/reassign` | Admin | `{ agentId }` — reassign to a specific agent |
+| POST | `/tickets/:id/ai-analyze` | Agent/Admin | No body. Returns `{ summary, suggestedCategory, suggestedPriority, suggestedResponse, source: "groq"\|"mock" }` — see [ARCHITECTURE.md](ARCHITECTURE.md#ai-assist) |
 | POST | `/tickets/:id/attachments` | Bearer (ticket-visible) | `multipart/form-data`, field `file`, 5MB max, whitelisted types |
 | GET | `/tickets/:id/attachments/:attachmentId` | Bearer (ticket-visible) | Streams the file (`Content-Disposition: attachment`) |
 | GET | `/tickets/:id/comments` | Bearer (ticket-visible) | Internal notes filtered out for customers |

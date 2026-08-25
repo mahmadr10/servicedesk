@@ -1,5 +1,5 @@
 import { api } from "./client";
-import type { ApiSuccess, Ticket, TicketPriority, TicketStatus, Comment, Pagination } from "../types";
+import type { ApiSuccess, Ticket, TicketPriority, TicketStatus, Comment, Pagination, TicketAiAnalysis } from "../types";
 
 export interface ListTicketsParams {
   status?: TicketStatus;
@@ -83,6 +83,11 @@ export async function downloadAttachment(ticketId: string, attachmentId: string,
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+export async function analyzeTicketWithAiRequest(ticketId: string) {
+  const res = await api.post<ApiSuccess<{ analysis: TicketAiAnalysis }>>(`/tickets/${ticketId}/ai-analyze`);
+  return res.data.data.analysis;
 }
 
 export async function listCommentsRequest(ticketId: string) {

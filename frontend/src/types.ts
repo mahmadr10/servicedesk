@@ -98,6 +98,17 @@ export interface SLAPolicy {
   resolutionMinutes: number;
 }
 
+export interface TicketAiAnalysis {
+  summary: string;
+  suggestedCategory: string;
+  suggestedPriority: TicketPriority;
+  suggestedResponse: string;
+  // "groq" when a real LLM call produced this; "mock" when running without a
+  // GROQ_API_KEY (the app's required no-API-key fallback) — shown in the UI
+  // so it's never mistaken for a live model's judgment.
+  source: "groq" | "mock";
+}
+
 export interface AuditLogEntry {
   _id: string;
   actor: User | string | null;

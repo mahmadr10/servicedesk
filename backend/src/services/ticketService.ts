@@ -9,6 +9,8 @@ import { findCategoryByName } from "../repositories/categoryRepository";
 import { getSlaMinutesForPriority, addMinutes, computeSlaStatus } from "./slaService";
 import { logAction } from "./auditLogService";
 import { withSpan } from "../observability/otel";
+import { analyzeTicket as runAiAnalysis } from "./aiService";
+import { listActiveCategories } from "../repositories/categoryRepository";
 
 // ── The state machine ──────────────────────────────────────────────────
 // Unlike the earlier linear version, this graph BRANCHES: an IN_PROGRESS
@@ -387,4 +389,32 @@ export async function getTicketDocForDownload(ticketId: string, user: JwtPayload
   if (!ticket) throw new AppError(404, "NOT_FOUND", "Ticket not found.");
   assertCanView(ticket, user);
   return ticket;
+}
+
+// Staff-only (route enforces AGENT/ADMIN) — a customer isn't shown internal
+// triage tooling like a priority suggestion or a draft agent reply. Recomputed
+// on demand rather than cached on the ticket: it's an assistive suggestion for
+// whoever's looking at the ticket right now, not part of the ticket's
+// authoritative state (compare with `withSla()`, which is similarly
+// recomputed-not-stored for the same "only true at read time" reason).
+export async function getAiAnalysis(ticketId: string, actor: JwtPayload) {
+  const ticket = await findTicketDocOr404(ticketId);
+  const activeCategories = await listActiveCategories();
+
+  const analysis = await runAiAnalysis({
+    title: ticket.title,
+    description: ticket.description,
+    validCategories: activeCategories.map((c) => c.name),
+  });
+
+  await logAction({
+    actor: actor.userId,
+    action: "AI_ANALYSIS_REQUESTED",
+    entity: "Ticket",
+    entityId: ticket._id.toString(),
+    newValue: { suggestedCategory: analysis.suggestedCategory, suggestedPriority: analysis.suggestedPriority },
+    metadata: { source: analysis.source },
+  });
+
+  return analysis;
 }

@@ -285,6 +285,73 @@ the metrics endpoint exists and is scrape-ready, wiring an actual Grafana
 service into `docker-compose.yml` was judged lower-value than the tracing
 work itself for the time available.
 
+## AI Assist
+
+The spec's optional bonus feature: `POST /tickets/:id/ai-analyze`
+(Agent/Admin only) generates a summary, a suggested category/priority, and a
+draft first response for a ticket.
+
+```mermaid
+flowchart LR
+    Ctrl["ticketController<br/>.analyzeWithAi"]
+    Svc["ticketService<br/>.getAiAnalysis"]
+    AI["aiService<br/>.analyzeTicket()<br/>— the ONE seam"]
+    Graph["ticketAnalysisGraph<br/>(LangGraph + Groq)"]
+    Mock["mockAnalyzer<br/>(keyword rules)"]
+
+    Ctrl --> Svc --> AI
+    AI -- "GROQ_API_KEY set" --> Graph
+    AI -- "no key / disabled / graph threw" --> Mock
+```
+
+**The graph itself** (`ai/ticketAnalysisGraph.ts`) is a real fan-out/fan-in,
+not one prompt call dressed up in LangGraph for its own sake:
+
+```mermaid
+flowchart LR
+    START((START)) --> classify["classify<br/>(category + priority,<br/>structured output)"]
+    START --> summarize["summarize<br/>(1-2 sentence summary)"]
+    classify --> draft["draftResponse<br/>(needs BOTH outputs)"]
+    summarize --> draft
+    draft --> END((END))
+```
+
+`classify` and `summarize` only need the ticket's raw title/description, so
+they run as independent parallel branches — LangGraph batches everything
+reachable from `START` into one superstep. `draftResponse` genuinely can't
+start until both finish (it references the classified category/priority AND
+the summary when drafting a reply), so it's a real fan-in, not just two
+sequential steps forced apart. `classify` uses `.withStructuredOutput(zodSchema)`
+so its output is a typed `{ category, priority }`, not free text to parse —
+and the returned category is validated against the ticket system's actual
+active categories, falling back to the first valid one rather than trusting
+an LLM not to hallucinate a category that doesn't exist.
+
+**Replaceable service abstraction**: every caller (`ticketService`,
+transitively the controller) only ever imports `aiService.analyzeTicket()`.
+Nothing outside `aiService.ts` knows LangGraph or Groq exist — swapping the
+provider means editing/replacing `ai/ticketAnalysisGraph.ts` and this one
+call site, never the controller, route, or frontend contract. (A dynamic
+`import()` was tried first, specifically to keep the LangGraph module out of
+the mock-only path entirely — reverted after live verification caught it
+silently failing under `tsx`'s dev-time module resolution; see
+[BUILD_LOG.md](BUILD_LOG.md#ai-ticket-assistant-langgraph--groq) for what
+that actually looked like. The module has no expensive side effects at
+import time, so a static import costs nothing.)
+
+**Mock fallback** (`ai/mockAnalyzer.ts`): deterministic keyword matching
+(e.g. "500"/"down"/"outage" → `CRITICAL`), not a real classifier — good
+enough to prove the feature's full shape (API contract, audit log, UI) with
+zero network calls, which is also why it's what the automated test suite
+exercises (no `GROQ_API_KEY` secret is configured in CI).
+
+**Not persisted on the ticket**: like `sla` (see above), an analysis is
+recomputed fresh each time an agent clicks "Analyze" — it's a suggestion for
+whoever's looking at the ticket right now, not part of the ticket's
+authoritative state. Every request is still recorded to the audit trail
+(`AI_ANALYSIS_REQUESTED`, with the source — `groq` or `mock` — in its
+metadata) so there's a record of when AI assistance was used.
+
 ## Authentication flow
 
 ```mermaid

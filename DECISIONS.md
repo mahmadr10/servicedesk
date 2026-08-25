@@ -140,6 +140,50 @@ close.
 on the backend and trusting the frontend's HTML5 `required`/`type`
 attributes for UX.
 
+## 8. LangGraph (over a single LLM call) for the AI ticket assistant, with Groq as the model provider
+
+**Alternatives considered**: one prompt asking for summary + category +
+priority + draft reply all at once (a single JSON-mode call — simpler,
+fewer moving parts); OpenAI as the model provider.
+
+**Why a graph over one call**: `classify` and `summarize` are genuinely
+independent (both only need the raw title/description) but `draftResponse`
+genuinely depends on BOTH of their outputs (it references the classified
+category/priority and the summary together when drafting a reply) — a real
+fan-out/fan-in shape, not an arbitrary one imposed to justify the tooling.
+A single combined prompt would work too (and is the simpler choice for a
+smaller task) — the graph is worth it here specifically because it lets
+`classify` use `.withStructuredOutput(zodSchema)` for a typed, validated
+result independent of the free-text summary/response generation, and makes
+each step's failure/latency individually observable (see the OpenTelemetry
+section above — each node is its own unit of work a trace can show).
+
+**Why Groq over OpenAI/Anthropic**: fast inference (its whole product pitch)
+matters specifically for a synchronous "click a button, wait for a result"
+UI interaction — a multi-second wait for a triage suggestion is a worse
+experience than for something running in the background. Also has a
+genuinely free tier suitable for a project like this one, vs. requiring a
+paid API key just to try the feature.
+
+**Why the mock/fallback is the DEFAULT, not an afterthought**: the spec
+requires the app to run with zero API key. Rather than bolt a fallback onto
+an AI-first design, `aiService.analyzeTicket()` treats "no key configured"
+as the normal path (checked first) and the real LLM call as the enhancement
+— which is also why the mock analyzer gets its own real unit tests (see
+[TESTING.md](TESTING.md)) rather than being an untested stub nobody expects
+to actually run. This mirrors the OpenTelemetry decision above: the app
+must work standalone first, richer behavior is additive when configured.
+
+**Trade-off**: `@langchain/langgraph` + `@langchain/groq` are two more
+dependencies for what's ultimately three LLM calls — a hand-rolled
+`Promise.all([classify(), summarize()]).then(draftResponse)` would do the
+same orchestration with zero extra dependencies. Chose LangGraph anyway
+specifically because the brief asked for something "agentic like
+LangGraph" by name — a deliberate choice to demonstrate the tool, not the
+only reasonable engineering call in isolation.
+
+## 9. Zod for validation, on both frontend and backend, independently
+
 **Why Zod**: TypeScript-first — a schema's inferred type (`z.infer<...>`)
 IS the TypeScript type, so a validator and its corresponding type can never
 silently drift apart the way a hand-written interface next to a

@@ -72,6 +72,16 @@ export function useAssignToSelf(ticketId: string) {
   });
 }
 
+export function useAnalyzeTicketWithAi(ticketId: string) {
+  // A mutation, not a query: this is a deliberate "generate me a suggestion
+  // right now" action (and it costs an LLM call when a real key is
+  // configured), not passive data to fetch/cache/refetch-on-focus like the
+  // rest of this file's useQuery hooks.
+  return useMutation({
+    mutationFn: () => ticketsApi.analyzeTicketWithAiRequest(ticketId),
+  });
+}
+
 export function useUploadAttachment(ticketId: string) {
   const qc = useQueryClient();
   return useMutation({

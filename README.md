@@ -46,6 +46,15 @@ changes to everyone watching a ticket, without a page refresh.
 - **Real-time**: Socket.IO, JWT-authenticated at connection time. A
   customer's own ticket updates live; agents/admins share a room so
   reassignment is visible without a refresh.
+- **AI Assist**: an Agent/Admin-only "Analyze with AI" action on the ticket
+  detail page — a real LangGraph pipeline (parallel `classify`/`summarize`
+  branches fan into a `draftResponse` step) backed by Groq, generating a
+  summary, suggested category/priority, and a draft first reply. No
+  `GROQ_API_KEY`? It automatically falls back to a deterministic mock
+  analyzer — the whole app, including this feature, runs with zero API key.
+  Implemented as a replaceable service abstraction (`services/aiService.ts`)
+  — nothing outside that one file knows LangGraph or Groq exist. Details:
+  [ARCHITECTURE.md](ARCHITECTURE.md#ai-assist).
 - **Validation**: Zod on every request body/params/query, both ends.
 - **Security**: password hashing (bcrypt), rate limiting, Helmet security
   headers, centralized error handling (no stack traces to the client),
@@ -148,14 +157,13 @@ Real measured results and the optimization story: [BUILD_LOG.md](BUILD_LOG.md#pe
 
 ## What was intentionally left out of scope, and why
 
-**Not built at all**, as genuinely out of scope for this exercise: a live
-AI feature (documented as a viable bonus addition, not implemented —
-would need an LLM API key and is additive, not core), a Grafana dashboard on
-top of the Prometheus metrics endpoint (the endpoint itself exists — wiring
-an actual Grafana instance to it is one `docker-compose` service away, not
-done here), and an actual live production deployment (prepared — Docker + CI
-are deploy-ready — but not executed, since it needs accounts on a hosting
-platform that only the project owner can create).
+**Not built at all**, as genuinely out of scope for this exercise: a
+Grafana dashboard on top of the Prometheus metrics endpoint (the endpoint
+itself exists — wiring an actual Grafana instance to it is one
+`docker-compose` service away, not done here), and an actual live
+production deployment (prepared — Docker + CI are deploy-ready — but not
+executed, since it needs accounts on a hosting platform that only the
+project owner can create).
 
 **Deliberately simplified**: no email/Slack notifications (Socket.IO covers
 the real-time requirement), no in-app file preview (download only), no

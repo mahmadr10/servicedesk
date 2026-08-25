@@ -223,6 +223,35 @@ describe("Tickets: creation, retrieval, assignment, status transitions", () => {
     expect(res.status).toBe(403);
   });
 
+  it("lets an agent run AI analysis on a ticket (mock fallback — no GROQ_API_KEY in test env)", async () => {
+    const customer = await registerAndLogin("CUSTOMER", "aicust");
+    const agent = await registerAndLogin("AGENT", "aiagent");
+    const created = await request(app)
+      .post("/api/v1/tickets")
+      .set("Authorization", `Bearer ${customer.token}`)
+      .send({ title: "Payment API returns 500", description: "Checkout is down for every customer.", category: "Technical", priority: "LOW" });
+    const ticketId = created.body.data.ticket._id;
+
+    const res = await request(app).post(`/api/v1/tickets/${ticketId}/ai-analyze`).set("Authorization", `Bearer ${agent.token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.analysis.source).toBe("mock"); // no GROQ_API_KEY is set in the test environment, by design
+    expect(res.body.data.analysis.suggestedPriority).toBe("CRITICAL"); // "returns 500" / "down" — the mock's own keyword rules
+    expect(typeof res.body.data.analysis.summary).toBe("string");
+    expect(typeof res.body.data.analysis.suggestedResponse).toBe("string");
+  });
+
+  it("blocks a customer from calling the staff-only AI analysis endpoint", async () => {
+    const customer = await registerAndLogin("CUSTOMER", "aicust2");
+    const created = await request(app)
+      .post("/api/v1/tickets")
+      .set("Authorization", `Bearer ${customer.token}`)
+      .send({ title: "Need help", description: "Please assist with this issue", category: "Other", priority: "LOW" });
+    const ticketId = created.body.data.ticket._id;
+
+    const res = await request(app).post(`/api/v1/tickets/${ticketId}/ai-analyze`).set("Authorization", `Bearer ${customer.token}`);
+    expect(res.status).toBe(403);
+  });
+
   it("paginates the ticket list instead of returning everything at once", async () => {
     const customer = await registerAndLogin("CUSTOMER", "pagecust");
     for (let i = 0; i < 3; i++) {

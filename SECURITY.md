@@ -104,6 +104,26 @@ MIME-sniffing) independent of application-code correctness.
   requester can view that ticket before streaming the file; there's no
   `express.static` exposing `uploads/` directly.
 
+## AI Assist and third-party data handling
+
+When `GROQ_API_KEY` is configured, "Analyze with AI" sends a ticket's
+**title and description** (not comments, not attachments, not any user PII
+beyond what's already in that text) to Groq's API to generate a summary/
+suggested priority/draft reply. This is a real data-handling boundary worth
+being explicit about:
+
+- **Staff-initiated only** — never runs automatically on ticket creation;
+  an Agent/Admin has to click "Analyze with AI" for anything to be sent.
+- **No API key configured → nothing ever leaves the server** — the
+  deterministic mock fallback (`ai/mockAnalyzer.ts`) runs entirely
+  in-process, which is also the default and what CI/a fresh clone runs.
+- Every analysis request is written to the audit trail
+  (`AI_ANALYSIS_REQUESTED`), so there's a record of when a ticket's content
+  was sent to a third party.
+- A real production deployment handling sensitive ticket content should
+  review Groq's own data-retention/training-use policy before enabling this
+  feature, the same as any third-party LLM API integration.
+
 ## Error handling
 
 Centralized (`middleware/errorHandler.ts`): every error becomes
