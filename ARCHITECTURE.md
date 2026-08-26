@@ -85,6 +85,8 @@ erDiagram
     TICKET }o--|| CATEGORY : "belongs to (by name)"
     TICKET }o--|| SLA_POLICY : "priority looked up against"
     USER ||--o{ AUDIT_LOG : "acts as (nullable)"
+    USER ||--o{ NOTIFICATION : receives
+    TICKET ||--o{ NOTIFICATION : "concerns (nullable)"
 
     USER {
         ObjectId _id
@@ -139,6 +141,15 @@ erDiagram
         mixed oldValue
         mixed newValue
         Date timestamp
+    }
+    NOTIFICATION {
+        ObjectId _id
+        ObjectId user FK
+        string type
+        string message
+        ObjectId ticket FK "nullable"
+        boolean read
+        Date createdAt
     }
     REFRESH_TOKEN {
         ObjectId _id
@@ -223,6 +234,51 @@ sequenceDiagram
     Ctrl-->>B: { success, data } JSON
     Note over Log,B: on error: errorHandler catches it,<br/>logs full detail, returns { success:false, error, requestId }
 ```
+
+## Background Jobs
+
+`jobs/slaBreachJob.ts` — a `node-cron` job running every minute, checking
+for tickets that just crossed their response or resolution SLA deadline
+while still active (not `RESOLVED`/`CLOSED`), and pushing a persisted
+[Notification](#) + a live `notification:new` Socket.IO event to whoever
+should know (the assigned agent, or every active admin if the ticket is
+unassigned).
+
+```mermaid
+flowchart LR
+    Cron["node-cron<br/>(every minute)"] --> Check["checkSlaBreaches()"]
+    Check -->|"query: active status,<br/>deadline < now,<br/>NOT already notified"| Ticket[("Ticket")]
+    Check --> Notif[("Notification<br/>(new collection)")]
+    Check --> Socket["Socket.IO<br/>user:&lt;id&gt; room"]
+    Check --> Audit[("AuditLog<br/>SLA_BREACH_DETECTED")]
+```
+
+**Fires exactly once per breach**, not once per minute forever: each ticket
+carries `responseBreachNotified`/`resolutionBreachNotified` booleans, set
+the first time each is found breached. `computeSlaStatus()` (used for the
+LIVE "breached: true/false" shown on a ticket) is intentionally stateless
+and recomputed fresh on every read — a notification needs the opposite
+property, firing exactly once, which is what the flag is for.
+
+**A real backward-compatibility bug this surfaced**: the query originally
+read `{ resolutionBreachNotified: false }` — which, run against the demo
+tickets seeded *before* this field existed in the schema, matched **zero**
+tickets, because MongoDB's `{ field: false }` filter doesn't match a
+document where the field is simply absent, only one where it's explicitly
+stored as `false`. Fixed to `{ $ne: true }`, which correctly treats "never
+set" and "explicitly false" as the same thing — both mean "not yet
+notified." A schema evolving underneath already-written documents is a
+completely ordinary situation in a real deployment, not an edge case
+invented for this write-up.
+
+**Manually triggerable** (`POST /admin/jobs/sla-check/run`, Admin-only) —
+the exact same function the cron calls, for on-demand use (and so a demo
+doesn't have to sit and wait up to 60 seconds for the next tick).
+
+**Enabled by `JOBS_ENABLED`** (default `true`) — off in the Vitest test
+env implicitly (the job is only started from `index.ts`, which the test
+suite never imports — it drives `app.ts` directly via Supertest) and
+explicitly in the E2E harness, same pattern as `OTEL_ENABLED`/`AI_ENABLED`.
 
 ## AI Dev Assistant
 

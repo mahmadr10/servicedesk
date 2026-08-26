@@ -33,6 +33,14 @@ export function emitNewTicket(ticket: ITicket) {
 // that one admin's own investigation, not something every agent needs to
 // see. This is what lets the frontend show agents "lighting up" in
 // real time instead of a single blocking spinner.
+// New notification for one user (see jobs/slaBreachJob.ts) — the SAME
+// per-user "user:<id>" room every other targeted event in this app uses,
+// not a new mechanism invented for this feature.
+export function emitNotification(userId: string, notification: unknown) {
+  if (!ioInstance) return;
+  ioInstance.to(`user:${userId}`).emit("notification:new", notification);
+}
+
 export function emitDevAssistantStep(
   userId: string,
   step: { agent: string; status: "running" | "done"; summary?: string }

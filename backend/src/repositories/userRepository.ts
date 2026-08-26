@@ -30,3 +30,11 @@ export function countUsers(filter: { role?: UserRole }) {
 export function updateUser(id: string, updates: Partial<Pick<IUser, "role" | "isActive" | "name">>) {
   return User.findByIdAndUpdate(id, updates, { returnDocument: "after" });
 }
+
+// Used by jobs/slaBreachJob.ts: an UNASSIGNED ticket breaching its SLA has
+// no specific agent to notify, so every active admin gets it instead — an
+// unassigned-and-overdue ticket is a triage/staffing problem, not one
+// agent's problem.
+export function findActiveAdminIds() {
+  return User.find({ role: "ADMIN", isActive: true }).select("_id").then((users) => users.map((u) => u._id.toString()));
+}

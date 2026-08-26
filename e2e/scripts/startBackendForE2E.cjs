@@ -35,6 +35,11 @@ async function main() {
       // source of flakiness this suite doesn't need — tracing itself isn't
       // what these tests are verifying.
       OTEL_ENABLED: "false",
+      // The E2E flow doesn't test SLA breach notifications, and a cron
+      // ticking every minute during a short-lived test run is just noise
+      // (worse: it could write Notification docs mid-test that a less
+      // careful future assertion might accidentally pick up).
+      JOBS_ENABLED: "false",
     },
   });
 

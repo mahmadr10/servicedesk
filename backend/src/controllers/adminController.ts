@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import * as adminService from "../services/adminService";
 import * as devAssistantService from "../services/devAssistantService";
+import { checkSlaBreaches } from "../jobs/slaBreachJob";
 
 export async function listUsers(req: Request, res: Response) {
   const { role, page, limit } = req.query as any;
@@ -11,6 +12,15 @@ export async function listUsers(req: Request, res: Response) {
 export async function updateUser(req: Request, res: Response) {
   const user = await adminService.updateUser(req.params.id as string, req.body, req.user!);
   res.status(200).json({ success: true, data: { user } });
+}
+
+// Manual trigger for the SLA breach background job — the job itself runs
+// on a 1-minute cron in production (see jobs/slaBreachJob.ts), but nobody
+// demoing this should have to sit and wait for the clock; this runs the
+// EXACT same function the cron calls, on demand.
+export async function runSlaBreachCheck(_req: Request, res: Response) {
+  const result = await checkSlaBreaches();
+  res.status(200).json({ success: true, data: result });
 }
 
 export async function askDevAssistant(req: Request, res: Response) {

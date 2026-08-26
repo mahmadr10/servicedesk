@@ -124,6 +124,16 @@ export interface DevAssistantResult {
   source: "groq" | "mock";
 }
 
+export interface Notification {
+  _id: string;
+  user: string;
+  type: "SLA_BREACH_RESPONSE" | "SLA_BREACH_RESOLUTION";
+  message: string;
+  ticket: string | null;
+  read: boolean;
+  createdAt: string;
+}
+
 export interface AuditLogEntry {
   _id: string;
   actor: User | string | null;

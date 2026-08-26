@@ -1,5 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { NotificationBell } from "./NotificationBell";
 
 function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   return (
@@ -48,6 +49,7 @@ export function Navbar() {
           </>
         )}
         {user && <NavLink to="/profile">Profile</NavLink>}
+        {user && <NotificationBell />}
         {user && (
           <>
             <span className="text-slate-400">

@@ -9,6 +9,7 @@ import { seedDefaults } from "./config/seed";
 import { initSockets } from "./sockets";
 import { createApp } from "./app";
 import { logger } from "./observability/logger";
+import { startSlaBreachJob } from "./jobs/slaBreachJob";
 
 async function main() {
   await connectDB();
@@ -17,6 +18,7 @@ async function main() {
   const app = createApp();
   const httpServer = createServer(app);
   initSockets(httpServer);
+  startSlaBreachJob();
 
   httpServer.listen(env.PORT, () => {
     logger.info(`Backend listening on http://localhost:${env.PORT}`);

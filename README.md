@@ -66,6 +66,14 @@ changes to everyone watching a ticket, without a page refresh.
   its tool set for it to call, so it cannot edit code itself, by
   construction, not just by instruction. Same mock fallback principle —
   runs with zero API key. Details: [ARCHITECTURE.md](ARCHITECTURE.md#ai-dev-assistant).
+- **Background jobs**: a `node-cron` job (every minute) scans for tickets
+  that just breached their SLA deadline while still active, and pushes a
+  persisted notification (a real `notifications` collection, not just an
+  in-the-moment Socket.IO event) + live update to the assigned agent (or
+  every admin, if unassigned) — a notification bell in the navbar shows the
+  unread count and updates live. Manually triggerable
+  (`POST /admin/jobs/sla-check/run`) for on-demand use. Details:
+  [ARCHITECTURE.md](ARCHITECTURE.md#background-jobs).
 - **Validation**: Zod on every request body/params/query, both ends.
 - **Security**: password hashing (bcrypt), rate limiting, Helmet security
   headers, centralized error handling (no stack traces to the client),

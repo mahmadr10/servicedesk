@@ -117,6 +117,20 @@ All routes below require `requireAuth` + `requireRole("ADMIN")`.
 | PUT | `/admin/sla-policies/:priority` | `{ responseMinutes, resolutionMinutes }` (upsert) |
 | POST | `/admin/dev-assistant/ask` | `{ question }` — multi-agent codebase investigator. Returns `{ selectedAgents, findings, diagnosis, source: "groq"\|"mock" }`. Tighter rate limit (10/15min) — see [ARCHITECTURE.md](ARCHITECTURE.md#ai-dev-assistant) |
 
+## Notifications
+
+Persisted, per-user notifications — currently written only by the SLA
+breach background job (see [ARCHITECTURE.md](ARCHITECTURE.md#background-jobs)),
+generic enough for future notification types.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/notifications` 📄 | Bearer | Own notifications, newest first |
+| GET | `/notifications/unread-count` | Bearer | `{ count }` |
+| PATCH | `/notifications/:id/read` | Bearer | Marks one read (scoped to the caller — can't mark another user's) |
+| PATCH | `/notifications/read-all` | Bearer | Marks all of the caller's unread notifications read |
+| POST | `/admin/jobs/sla-check/run` | Admin | Manually runs the SLA breach job on demand (same function the 1-minute cron calls) |
+
 ## Audit Logs
 
 | Method | Path | Auth | Notes |
@@ -139,6 +153,7 @@ Connect with `io(url, { auth: { token: accessToken } })`. Events received:
 | `ticket:created` | full ticket | A customer creates a ticket (sent to the `agents` room) |
 | `ticket:updated` | full ticket | Status change, assignment, reassignment, or priority change (sent to the ticket's customer AND the `agents` room) |
 | `devAssistant:step` | `{ agent, status, summary? }` | Live progress from an in-flight `POST /admin/dev-assistant/ask` — sent only to the asking admin's own room, not broadcast |
+| `notification:new` | full notification | The SLA breach job created a new notification for this user — sent only to that user's own room |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how the authentication and room
 model prevent duplicate/ghost updates.

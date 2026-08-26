@@ -63,6 +63,12 @@ export interface ITicket extends Document {
   firstResponseAt: Date | null; // set when an agent's first comment/action lands
   resolvedAt: Date | null;
 
+  // Set by jobs/slaBreachJob.ts the first (and only) time each deadline is
+  // found breached — without these, a job re-scanning every minute would
+  // re-notify the same still-overdue ticket every single run forever.
+  responseBreachNotified: boolean;
+  resolutionBreachNotified: boolean;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -83,6 +89,8 @@ const ticketSchema = new Schema<ITicket>(
     resolutionDeadline: { type: Date, required: true },
     firstResponseAt: { type: Date, default: null },
     resolvedAt: { type: Date, default: null },
+    responseBreachNotified: { type: Boolean, default: false },
+    resolutionBreachNotified: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

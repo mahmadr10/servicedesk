@@ -514,3 +514,64 @@ question ("where is authentication implemented," correctly traced through
 `authController.ts` → `services/authService.ts` → `utils/jwt.ts`). Fully
 functional with zero API key. Runs with zero write access to source files,
 by construction.
+
+---
+
+## Background job: SLA breach notifications
+
+**Problem**: the spec's "Background Jobs" bonus item, and a real gap:
+`computeSlaStatus()` shows LIVE "breached: true/false" on a ticket someone's
+actively looking at, but nobody gets told about a breach unless they
+happen to be staring at that exact ticket at that exact moment.
+
+**Approach**: a `node-cron` job, every minute, scanning for tickets that
+just crossed their response or resolution deadline while still active,
+writing a real persisted `Notification` (the spec's own suggested
+`notifications` collection — not built until now) and pushing a live
+`notification:new` Socket.IO event to whoever should know. A per-ticket
+`*BreachNotified` boolean is what makes this fire exactly once per breach
+instead of every minute forever.
+
+**Implementation**: `models/Notification.ts`, `repositories/
+notificationRepository.ts`, `jobs/slaBreachJob.ts` (the cron + the
+`checkSlaBreaches()` function it calls), a manual-trigger admin endpoint
+(same function, on demand), and a notification bell component in the
+navbar (unread badge, dropdown, live socket updates).
+
+**Challenges — a real backward-compatibility bug, caught by testing
+against real (pre-existing) data instead of only freshly-created test
+fixtures**: the query `Ticket.find({ resolutionBreachNotified: false, ... })`
+matched **zero** of the 15 demo tickets seeded earlier in this build,
+despite several of them being genuinely, obviously overdue (backdated
+`createdAt` well past their SLA window). Root cause: those tickets were
+created via `Ticket.create()` **before** `resolutionBreachNotified` existed
+in the schema — the field is simply absent from their stored documents.
+MongoDB's `{ field: false }` filter does not match a missing field, only
+one explicitly stored as `false`. My own new automated integration test
+(`slaBreachJob.integration.test.ts`) didn't catch this, because it creates
+its OWN test tickets via the current (already-updated) schema — Mongoose
+populates the field's default on every fresh `.create()` call, so the test
+data never had the "field genuinely doesn't exist" shape the real seeded
+data did. Fixed the query to `{ $ne: true }` (matches both "explicitly
+false" and "missing" — the correct meaning of "not yet notified" either
+way). A schema gaining a field after real documents already exist is an
+entirely ordinary situation in a real deployment, not a contrived edge
+case — this is exactly the kind of bug that "looks fine in tests, silently
+does nothing in the field" (see [SECURITY.md](SECURITY.md) et al. for the
+project's general stance on preferring caught-in-testing over
+caught-in-production).
+
+**Testing**: `slaBreachJob.integration.test.ts` — a real (in-memory)
+database, not a mocked Ticket model, specifically because the bug above
+was a QUERY-correctness bug, invisible to any test that mocks the query
+away. Covers: a newly-breached unresolved ticket gets notified and flagged
+(and does NOT get re-notified on a second run), and a ticket whose deadline
+hasn't passed yet is correctly left alone.
+
+**Result**: verified live against the real (Atlas-backed) seeded data — the
+manual-trigger endpoint correctly found and notified on 10 genuinely
+overdue demo tickets in one run, a screenshot of the notification bell
+shows real messages ("Resolution SLA breached: TCK-000001 — 'Payment API
+returns HTTP 500 on checkout'") with real timestamps, and the ticket queue
+itself shows the same tickets in red ("overdue by 29:08:27") — two
+independent parts of the UI agreeing with each other and with reality.

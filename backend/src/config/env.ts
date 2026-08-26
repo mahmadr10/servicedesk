@@ -38,6 +38,12 @@ const envSchema = z.object({
   // on. Override via AI_MODEL if this one is retired too — check that
   // endpoint (with your own key) for the current lineup.
   AI_MODEL: z.string().default("openai/gpt-oss-120b"),
+
+  // Background jobs (jobs/slaBreachJob.ts). Off in tests (no point scanning
+  // for breaches against a throwaway in-memory DB that's gone in seconds)
+  // and in the E2E harness (nothing there depends on it, and a cron ticking
+  // during a short-lived test run is just noise).
+  JOBS_ENABLED: z.enum(["true", "false"]).default("true"),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -33,6 +33,10 @@ router.patch(
   adminController.setCategoryActive
 );
 
+// Manual trigger for the background job (see jobs/slaBreachJob.ts) — the
+// same function the 1-minute cron calls, exposed for on-demand/demo use.
+router.post("/jobs/sla-check/run", adminController.runSlaBreachCheck);
+
 // AI Dev Assistant (multi-agent orchestrator) — investigate-and-recommend
 // only, Admin-only, its own tighter rate limit (see middleware/rateLimit.ts
 // for why). See services/devAssistantService.ts and ai/devAssistant/.

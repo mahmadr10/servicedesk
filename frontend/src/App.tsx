@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Navbar } from "./components/Navbar";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { useSocketSync } from "./hooks/useSocketSync";
+import { useNotificationSocketSync } from "./hooks/useNotifications";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { CreateTicketPage } from "./pages/CreateTicketPage";
@@ -45,6 +46,7 @@ function Home() {
 function AppRoutes() {
   const { user } = useAuth();
   useSocketSync(); // mounted once, near the root — see hooks/useSocketSync.ts
+  useNotificationSocketSync();
 
   return (
     <Suspense fallback={<PageFallback />}>
