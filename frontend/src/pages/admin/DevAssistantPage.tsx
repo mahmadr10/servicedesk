@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useDevAssistant } from "../../hooks/useDevAssistant";
+import { useDevAssistant, useApplyDevAssistantFix } from "../../hooks/useDevAssistant";
 import type { DevAssistantAgent } from "../../types";
 
 const AGENT_LABELS: Record<DevAssistantAgent, string> = {
@@ -9,6 +9,7 @@ const AGENT_LABELS: Record<DevAssistantAgent, string> = {
   log: "Log Agent",
   test: "Test Agent",
   diagnosis: "Diagnosis",
+  suggestFix: "Suggested Fix",
 };
 
 const SAMPLE_QUESTIONS = [
@@ -49,13 +50,28 @@ function AgentBox({ agent, step }: { agent: DevAssistantAgent; step?: { status: 
   );
 }
 
+// Old code struck through in red, new code in green — a minimal diff view,
+// not a full syntax-highlighted editor, because this only ever needs to
+// show one small, localized change (applyFix.ts itself refuses anything
+// that isn't).
+function DiffView({ oldCode, newCode }: { oldCode: string; newCode: string }) {
+  return (
+    <div className="overflow-x-auto rounded border border-slate-200 font-mono text-xs">
+      <pre className="whitespace-pre-wrap bg-red-50 p-2 text-red-800 line-through decoration-red-400">{oldCode}</pre>
+      <pre className="whitespace-pre-wrap bg-emerald-50 p-2 text-emerald-800">{newCode}</pre>
+    </div>
+  );
+}
+
 export function DevAssistantPage() {
   const [question, setQuestion] = useState("");
   const { ask, steps, result, error, isPending } = useDevAssistant();
+  const applyFix = useApplyDevAssistantFix();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!question.trim() || isPending) return;
+    applyFix.reset();
     await ask(question.trim());
   }
 
@@ -65,8 +81,9 @@ export function DevAssistantPage() {
       <p className="mt-1 text-sm text-slate-500">
         A multi-agent investigator for THIS codebase — an orchestrator picks which read-only agents
         (repo search, git history, recent logs, the real test suite) are relevant to your question,
-        runs them, and synthesizes a diagnosis. It only investigates and recommends — it never writes
-        or applies code changes itself.
+        runs them, and synthesizes a diagnosis. It can propose a specific code fix, but{" "}
+        <strong>nothing is ever applied without your explicit click</strong> — and an applied fix
+        immediately re-runs the real test suite, auto-reverting itself if anything breaks.
       </p>
 
       <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-4">
@@ -111,6 +128,8 @@ export function DevAssistantPage() {
             </div>
             <span className="text-slate-300">→</span>
             <AgentBox agent="diagnosis" step={steps.diagnosis} />
+            <span className="text-slate-300">→</span>
+            <AgentBox agent="suggestFix" step={steps.suggestFix} />
           </div>
         </div>
       )}
@@ -131,8 +150,57 @@ export function DevAssistantPage() {
           </div>
           <p className="whitespace-pre-wrap text-sm text-slate-700">{result.diagnosis}</p>
           <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">
-            Investigation only — no code was changed. A human reviews this before acting on it.
+            Investigation only — no code was changed by the analysis itself. Applying the suggested
+            fix below (if any) is a separate, explicit step.
           </p>
+        </div>
+      )}
+
+      {result?.suggestedFix.fixAvailable && (
+        <div className="mt-6 rounded-lg border border-amber-200 bg-white p-6">
+          <h2 className="mb-2 text-sm font-semibold text-slate-800">Suggested Fix</h2>
+          <p className="mb-1 text-xs text-slate-500">
+            Target file: <code className="rounded bg-slate-100 px-1 py-0.5">{result.suggestedFix.targetFile}</code>
+          </p>
+          <p className="mb-3 text-sm text-slate-700">{result.suggestedFix.explanation}</p>
+          <DiffView oldCode={result.suggestedFix.oldCode} newCode={result.suggestedFix.newCode} />
+
+          {!applyFix.data && (
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                onClick={() =>
+                  applyFix.mutate({
+                    targetFile: result.suggestedFix.targetFile,
+                    oldCode: result.suggestedFix.oldCode,
+                    newCode: result.suggestedFix.newCode,
+                  })
+                }
+                disabled={applyFix.isPending}
+                className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {applyFix.isPending ? "Applying + running tests…" : "Apply Fix"}
+              </button>
+              <span className="text-xs text-slate-400">Runs the real test suite immediately after applying; auto-reverts on failure.</span>
+            </div>
+          )}
+
+          {applyFix.isError && (
+            <p className="mt-3 text-xs text-red-600">
+              {(applyFix.error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ??
+                "Failed to apply the fix."}
+            </p>
+          )}
+
+          {applyFix.data && (
+            <div className={`mt-3 rounded p-3 text-xs ${applyFix.data.applied ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-800"}`}>
+              <p className="font-medium">
+                {applyFix.data.applied
+                  ? "✓ Applied — tests passed."
+                  : "✗ Reverted automatically — the change broke the test suite. No file was left modified."}
+              </p>
+              <pre className="mt-1 whitespace-pre-wrap">{applyFix.data.testSummary}</pre>
+            </div>
+          )}
         </div>
       )}
     </div>

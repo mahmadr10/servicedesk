@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { socket } from "../socket";
-import { askDevAssistantRequest } from "../api/devAssistant";
+import { askDevAssistantRequest, applyDevAssistantFixRequest } from "../api/devAssistant";
 import type { DevAssistantResult, DevAssistantStep } from "../types";
 
 // The request itself is a normal blocking POST (the backend runs the whole
@@ -40,4 +41,12 @@ export function useDevAssistant() {
   }, []);
 
   return { ask, steps, result, error, isPending };
+}
+
+// Separate from the mutation above on purpose — applying a fix is a
+// distinct, explicit, human-triggered action (never chained automatically
+// after `ask`), so it gets its own pending/error state rather than
+// overloading the investigation's.
+export function useApplyDevAssistantFix() {
+  return useMutation({ mutationFn: applyDevAssistantFixRequest });
 }

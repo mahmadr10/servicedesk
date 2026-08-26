@@ -1,9 +1,13 @@
 import { z } from "zod";
+import fs from "fs/promises";
+import path from "path";
 import { Annotation, StateGraph, START, END } from "@langchain/langgraph";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { ChatGroq } from "@langchain/groq";
 import { env } from "../../config/env";
 import { searchRepo, getRecentGitLog, searchRecentLogs, runTestSuite, extractSearchKeywords } from "./tools";
+
+const REPO_ROOT = path.join(__dirname, "..", "..", "..", "..");
 
 // The multi-agent shape: an orchestrator PLANS which specialist agents are
 // actually relevant to the question (not a fixed pipeline every time —
@@ -23,7 +27,17 @@ import { searchRepo, getRecentGitLog, searchRecentLogs, runTestSuite, extractSea
 
 export type AgentName = "repo" | "git" | "log" | "test";
 export type StepStatus = "running" | "done";
-export type OnStep = (agent: AgentName | "orchestrator" | "diagnosis", status: StepStatus, summary?: string) => void;
+export type OnStep = (agent: AgentName | "orchestrator" | "diagnosis" | "suggestFix", status: StepStatus, summary?: string) => void;
+
+export interface SuggestedFix {
+  fixAvailable: boolean;
+  targetFile: string;
+  oldCode: string;
+  newCode: string;
+  explanation: string;
+}
+
+const NO_FIX: SuggestedFix = { fixAvailable: false, targetFile: "", oldCode: "", newCode: "", explanation: "" };
 
 const State = Annotation.Root({
   question: Annotation<string>(),
@@ -37,6 +51,10 @@ const State = Annotation.Root({
     default: () => ({}),
   }),
   diagnosis: Annotation<string>(),
+  // No `default` needed — `suggestFix` unconditionally runs after
+  // `diagnosisAgent` on every invocation, so this is always populated by
+  // the time `.invoke()` resolves.
+  suggestedFix: Annotation<SuggestedFix>(),
 });
 type S = typeof State.State;
 
@@ -123,6 +141,87 @@ async function diagnosisNode(state: S, config: RunnableConfig): Promise<Partial<
   return { diagnosis };
 }
 
+const suggestFixSchema = z.object({
+  fixAvailable: z
+    .boolean()
+    .describe("True ONLY if you can identify a safe, minimal, specific fix directly supported by the file content given. False if unsure."),
+  oldCode: z
+    .string()
+    .describe("The EXACT original code to replace, copied VERBATIM (character-for-character) from the file content provided below."),
+  newCode: z.string().describe("The replacement code."),
+  explanation: z.string().describe("One or two sentences: what this changes and why it addresses the diagnosis."),
+});
+
+// Extracts the file the fix suggestion should target — from the repo
+// agent's findings (lines shaped "path:line: content", already sorted by
+// relevance by tools.ts's searchRepo), simply whichever file the FIRST
+// (highest-scored) line belongs to.
+//
+// Real bug this fixes, found live (see BUILD_LOG.md): the original version
+// instead picked the MOST-FREQUENTLY-APPEARING file across all findings —
+// which let a file matching one common, generic keyword five separate
+// times (five unrelated `function` declarations) outrank a file matching a
+// specific, rare identifier exactly once, even though that one match was
+// clearly the actually-relevant result. Counting occurrences threw away
+// the relevance ranking searchRepo had already done.
+function mostReferencedFile(repoFindings: string | undefined): string | null {
+  if (!repoFindings) return null;
+  const firstLine = repoFindings.split("\n")[0];
+  const match = firstLine.match(/^([^:]+\.tsx?):\d+:/);
+  return match ? match[1] : null;
+}
+
+async function suggestFixNode(state: S, config: RunnableConfig): Promise<Partial<S>> {
+  const onStep = onStepOf(config);
+  onStep("suggestFix", "running");
+
+  const targetFile = mostReferencedFile(state.findings.repo);
+  if (!targetFile) {
+    onStep("suggestFix", "done", "No specific file identified by the repo search — no fix suggested.");
+    return { suggestedFix: NO_FIX };
+  }
+
+  // Cap what we read/send — a fix suggestion for a 2000-line file from one
+  // grep hit isn't the point; this is for a small, localized, minimal fix.
+  const fileContent = await fs
+    .readFile(path.join(REPO_ROOT, targetFile), "utf-8")
+    .then((c) => c.split("\n").slice(0, 400).join("\n"))
+    .catch(() => null);
+  if (!fileContent) {
+    onStep("suggestFix", "done", `Could not read ${targetFile} — no fix suggested.`);
+    return { suggestedFix: NO_FIX };
+  }
+
+  const model = buildModel().withStructuredOutput(suggestFixSchema);
+  const result = await model.invoke([
+    {
+      role: "system",
+      content:
+        "Given a diagnosed issue and the full content of the ONE file most likely responsible, propose a minimal, " +
+        "safe fix if you're genuinely confident — otherwise set fixAvailable to false rather than guess. " +
+        "`oldCode` MUST be copied character-for-character from the file content below (it will be matched as an " +
+        "exact substring — if it doesn't match exactly, the fix will be rejected). Keep the change small and specific.",
+    },
+    { role: "user", content: `Question: ${state.question}\n\nDiagnosis: ${state.diagnosis}\n\nFile: ${targetFile}\n\n${fileContent}` },
+  ]);
+
+  // Defense in depth: never trust the model's claim that oldCode matches —
+  // verify it actually is a substring of the REAL current file content
+  // before ever presenting it as applicable. (applyFix.ts re-verifies this
+  // AGAIN independently at apply time — this check is what keeps an
+  // obviously-bad suggestion from even being shown as clickable.)
+  const oldCodeReallyMatches = result.fixAvailable && fileContent.includes(result.oldCode);
+
+  if (!oldCodeReallyMatches) {
+    onStep("suggestFix", "done", "No confident, verifiable fix identified.");
+    return { suggestedFix: NO_FIX };
+  }
+
+  const suggestedFix: SuggestedFix = { fixAvailable: true, targetFile, oldCode: result.oldCode, newCode: result.newCode, explanation: result.explanation };
+  onStep("suggestFix", "done", `Suggested fix for ${targetFile}: ${result.explanation}`);
+  return { suggestedFix };
+}
+
 const compiledGraph = new StateGraph(State)
   .addNode("plan", planNode)
   .addNode("repoAgent", repoAgentNode)
@@ -133,6 +232,7 @@ const compiledGraph = new StateGraph(State)
   // name to collide with a state channel name, and `diagnosis` is already
   // the State field this node writes into.
   .addNode("diagnosisAgent", diagnosisNode)
+  .addNode("suggestFix", suggestFixNode)
   .addEdge(START, "plan")
   .addConditionalEdges("plan", (state: S) =>
     routeToAgents(state).map((name) => (({ repo: "repoAgent", git: "gitAgent", log: "logAgent", test: "testAgent" }) as const)[name])
@@ -141,10 +241,11 @@ const compiledGraph = new StateGraph(State)
   .addEdge("gitAgent", "diagnosisAgent")
   .addEdge("logAgent", "diagnosisAgent")
   .addEdge("testAgent", "diagnosisAgent")
-  .addEdge("diagnosisAgent", END)
+  .addEdge("diagnosisAgent", "suggestFix")
+  .addEdge("suggestFix", END)
   .compile();
 
 export async function runDevAssistantGraph(question: string, onStep: OnStep) {
   const final = await compiledGraph.invoke({ question }, { configurable: { onStep } });
-  return { selectedAgents: final.selectedAgents, findings: final.findings, diagnosis: final.diagnosis };
+  return { selectedAgents: final.selectedAgents, findings: final.findings, diagnosis: final.diagnosis, suggestedFix: final.suggestedFix };
 }

@@ -43,5 +43,15 @@ export async function runDevAssistantMock(question: string, onStep: OnStep) {
       .join("\n\n");
   onStep("diagnosis", "done", diagnosis);
 
-  return { selectedAgents, findings, diagnosis };
+  // No fix suggestion without a real model — generating a code patch is a
+  // genuinely higher-stakes action than a keyword-heuristic diagnosis, not
+  // something to fake with string templates the way the diagnosis text is.
+  onStep("suggestFix", "done", "No GROQ_API_KEY configured — fix suggestions require a real model.");
+
+  return {
+    selectedAgents,
+    findings,
+    diagnosis,
+    suggestedFix: { fixAvailable: false, targetFile: "", oldCode: "", newCode: "", explanation: "" },
+  };
 }

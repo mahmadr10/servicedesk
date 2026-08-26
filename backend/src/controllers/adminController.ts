@@ -28,6 +28,11 @@ export async function askDevAssistant(req: Request, res: Response) {
   res.status(200).json({ success: true, data: result });
 }
 
+export async function applyDevAssistantFix(req: Request, res: Response) {
+  const result = await devAssistantService.applyDevAssistantFix(req.body, req.user!);
+  res.status(200).json({ success: true, data: result });
+}
+
 export async function listCategories(_req: Request, res: Response) {
   const categories = await adminService.listCategories();
   res.status(200).json({ success: true, data: { categories } });

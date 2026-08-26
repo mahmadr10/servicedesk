@@ -60,12 +60,17 @@ changes to everyone watching a ticket, without a page refresh.
   about the codebase ("Why are ticket updates sometimes duplicated?") and a
   LangGraph orchestrator plans which read-only specialist agents are
   relevant (repo search, git history, recent logs, the real test suite),
-  runs them, and synthesizes a diagnosis + recommendation — live agent
-  progress streams over Socket.IO as it happens. Structurally
-  investigate-and-recommend only: there is no write/patch tool anywhere in
-  its tool set for it to call, so it cannot edit code itself, by
-  construction, not just by instruction. Same mock fallback principle —
-  runs with zero API key. Details: [ARCHITECTURE.md](ARCHITECTURE.md#ai-dev-assistant).
+  runs them, synthesizes a diagnosis, and — when it's genuinely confident —
+  proposes a specific code fix as a real diff. The investigation graph
+  itself never writes anything (no write/patch tool exists in its tool set,
+  a structural boundary, not a prompt instruction); applying a proposed fix
+  is a completely separate, human-triggered step that immediately re-runs
+  the real test suite and auto-reverts the file if it fails. Live agent
+  progress (including "applying + testing…") streams over Socket.IO as it
+  happens. Same mock fallback principle — runs with zero API key ("suggest
+  a fix" simply doesn't happen in mock mode). Verified live end-to-end
+  against a real planted bug, through the actual browser UI, not just
+  unit-tested. Details: [ARCHITECTURE.md](ARCHITECTURE.md#ai-dev-assistant).
 - **Background jobs**: a `node-cron` job (every minute) scans for tickets
   that just breached their SLA deadline while still active, and pushes a
   persisted notification (a real `notifications` collection, not just an

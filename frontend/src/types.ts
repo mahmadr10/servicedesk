@@ -109,7 +109,7 @@ export interface TicketAiAnalysis {
   source: "groq" | "mock";
 }
 
-export type DevAssistantAgent = "orchestrator" | "repo" | "git" | "log" | "test" | "diagnosis";
+export type DevAssistantAgent = "orchestrator" | "repo" | "git" | "log" | "test" | "diagnosis" | "suggestFix";
 
 export interface DevAssistantStep {
   agent: DevAssistantAgent;
@@ -117,11 +117,26 @@ export interface DevAssistantStep {
   summary?: string;
 }
 
+export interface SuggestedFix {
+  fixAvailable: boolean;
+  targetFile: string;
+  oldCode: string;
+  newCode: string;
+  explanation: string;
+}
+
 export interface DevAssistantResult {
   selectedAgents: ("repo" | "git" | "log" | "test")[];
   findings: Record<string, string>;
   diagnosis: string;
+  suggestedFix: SuggestedFix;
   source: "groq" | "mock";
+}
+
+export interface ApplyFixResult {
+  applied: boolean;
+  testsPassed: boolean;
+  testSummary: string;
 }
 
 export interface Notification {

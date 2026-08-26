@@ -300,7 +300,8 @@ flowchart LR
     git --> diagnosis
     log --> diagnosis
     test --> diagnosis
-    diagnosis --> END((END))
+    diagnosis --> suggestFix["suggestFix<br/>(proposes a real patch,<br/>IF confident — else declines)"]
+    suggestFix --> END((END))
 ```
 
 **Only the agents the planner actually selects run at all** — asking a
@@ -316,12 +317,58 @@ updates duplicated" correctly selected `repo` + `log` and skipped `git`/
 `ai/devAssistant/tools.ts` is read-only — repo search (pure in-memory grep,
 no shell-out), git log/diff (read commands only), log search (reads an
 in-memory ring buffer), test run (executes the suite but writes nothing).
-There is no write/patch/apply tool anywhere in this file for the graph to
-call, so "the AI accidentally edits source" isn't a risk an LLM could be
-talked into by a cleverly-worded question — the capability simply doesn't
-exist in the tool set. It investigates and recommends; a human applies any
-fix. This directly follows the brief's own stated principle: "AI can
-recommend and automate; humans retain control over high-impact actions."
+There is no write/patch/apply tool anywhere in this file for the GRAPH to
+call — the graph itself (`plan`/agents/`diagnosisAgent`/`suggestFix`)
+cannot touch a file, full stop, regardless of what a cleverly-worded
+question asks it to do.
+
+The graph's `suggestFix` node CAN propose a real, specific patch (below) —
+but proposing is all it does. Applying one is a completely separate code
+path (`ai/devAssistant/applyFix.ts`), reachable only through its own
+endpoint, only ever called after a human has seen the diff and clicked
+"Apply" in the UI. Nothing inside the investigation graph can reach that
+path on its own. This directly follows the brief's own stated principle:
+"AI can recommend and automate; humans retain control over high-impact
+actions" — applied literally as an architectural boundary, not a
+suggestion the model could be talked out of.
+
+### Suggested fixes and the one gated write path
+
+`suggestFix` reads the single file the repo agent's evidence points at
+(capped at 400 lines) and asks the model for a specific fix — but only
+returns one if `fileContent.includes(oldCode)` is independently verified
+true server-side; the model's own claim that its snippet matches is never
+trusted alone. If nothing meets that bar, it declines rather than guess:
+
+```mermaid
+flowchart LR
+    Human["Human reviews<br/>the diff in the UI"] -->|clicks Apply| Endpoint["POST .../apply-fix"]
+    Endpoint --> Validate["validate: path inside<br/>backend|frontend/src,<br/>not ai/devAssistant/,<br/>.ts/.tsx only"]
+    Validate --> Match["oldCode must match the<br/>CURRENT file EXACTLY ONCE<br/>(0 or 2+ = reject)"]
+    Match --> Write["write the file"]
+    Write --> Test["run the REAL test suite"]
+    Test -->|pass| Keep["change kept"]
+    Test -->|fail| Revert["automatically reverted —<br/>original content restored"]
+```
+
+Every one of those checks is enforced in `applyFix.ts`, independent of
+anything the LLM said — a targetFile outside `backend/src`/`frontend/src`,
+inside `ai/devAssistant/` itself (self-modification refused), or the wrong
+extension is rejected before the file is even opened. `oldCode` matching
+zero or more-than-one location in the CURRENT file (which may have changed
+since the suggestion was generated) is rejected rather than guessed at. And
+the auto-revert-on-test-failure means an approved-but-wrong fix is
+self-correcting, not something a human has to notice and undo later.
+
+**Verified live, not just unit-tested**: a real deliberate bug (a discount
+function that added instead of subtracted) was diagnosed correctly, a real
+fix was generated with `oldCode` matching the live file exactly, applied
+through the actual browser UI's "Apply Fix" button, the real 44-test suite
+ran and passed, and the file was genuinely corrected on disk — see
+[BUILD_LOG.md](BUILD_LOG.md) for the full verification, including two more
+subtle ranking bugs this same testing pass caught and fixed (a generic
+word crowding out the specific identifier in repo search results, and the
+fix-target file being picked by match COUNT instead of match RELEVANCE).
 
 **Live progress over Socket.IO**: each node emits a `devAssistant:step`
 event (`{ agent, status: "running"|"done", summary }`) to the asking

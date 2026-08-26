@@ -42,6 +42,10 @@ httpOnly `refreshToken` cookie (sent automatically by the browser; a raw
 | `FORBIDDEN` | 403 | Authenticated, but not allowed to do this specific thing (wrong role, or not this ticket's owner) |
 | `NOT_FOUND` | 404 | No such ticket/user/category/etc., or an unmatched route |
 | `EMAIL_IN_USE` | 409 | Registration email already has an account |
+| `INVALID_TARGET_FILE` | 400 | Dev Assistant apply-fix: target file is outside `backend/src`/`frontend/src`, wrong extension, or is the Dev Assistant's own code |
+| `FIX_NOT_APPLICABLE` | 400 | Dev Assistant apply-fix: `oldCode` no longer matches the file's current content |
+| `FIX_AMBIGUOUS` | 400 | Dev Assistant apply-fix: `oldCode` appears more than once — refuses to guess which occurrence |
+| `FIX_TOO_BROAD` | 400 | Dev Assistant apply-fix: the change covers most of the file — refused rather than applied blindly |
 | `RATE_LIMITED` | 429 | Too many requests in the current window |
 | `INTERNAL_ERROR` | 500 | Unexpected server error — check the logs by `requestId` |
 
@@ -115,7 +119,8 @@ All routes below require `requireAuth` + `requireRole("ADMIN")`.
 | PATCH | `/admin/categories/:id` | `{ isActive }` |
 | GET | `/admin/sla-policies` | Current policy per priority |
 | PUT | `/admin/sla-policies/:priority` | `{ responseMinutes, resolutionMinutes }` (upsert) |
-| POST | `/admin/dev-assistant/ask` | `{ question }` — multi-agent codebase investigator. Returns `{ selectedAgents, findings, diagnosis, source: "groq"\|"mock" }`. Tighter rate limit (10/15min) — see [ARCHITECTURE.md](ARCHITECTURE.md#ai-dev-assistant) |
+| POST | `/admin/dev-assistant/ask` | `{ question }` — multi-agent codebase investigator. Returns `{ selectedAgents, findings, diagnosis, suggestedFix, source: "groq"\|"mock" }`. Tighter rate limit (10/15min) — see [ARCHITECTURE.md](ARCHITECTURE.md#ai-dev-assistant) |
+| POST | `/admin/dev-assistant/apply-fix` | `{ targetFile, oldCode, newCode }` — applies a fix from `suggestedFix` above. Immediately re-runs the real test suite; auto-reverts the file if it fails. Returns `{ applied, testsPassed, testSummary }`. The ONLY write path in this feature — reachable only after a human reviews the diff and explicitly calls this. |
 
 ## Notifications
 

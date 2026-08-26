@@ -24,6 +24,12 @@ export const askDevAssistantSchema = z.object({
   question: z.string().trim().min(5, "Ask a real question (min 5 characters).").max(500),
 });
 
+export const applyDevAssistantFixSchema = z.object({
+  targetFile: z.string().trim().min(1).max(300),
+  oldCode: z.string().min(1).max(5000),
+  newCode: z.string().min(1).max(5000),
+});
+
 export const upsertSlaPolicySchema = z.object({
   responseMinutes: z.coerce.number().int().min(1),
   resolutionMinutes: z.coerce.number().int().min(1),

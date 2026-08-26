@@ -75,13 +75,42 @@ export function extractSearchKeywords(question: string, max = 4): string[] {
 // depending on `grep`/`ripgrep` being installed — this walks the tree in
 // pure Node so it works identically on every OS and inside a minimal
 // Docker image with no shell utilities at all. ---
+// Real bug this scoring fixes, found in live testing (see BUILD_LOG.md):
+// the original version stopped at the first MAX_MATCHES lines found,
+// walking directories in filesystem order. A question mentioning a
+// specific function name ALSO naturally contains generic words ("function",
+// "returns", "expected") — and because those generic words match constantly
+// throughout a codebase, the match cap filled up with noise from files
+// earlier in the walk order, before ever reaching the file the SPECIFIC
+// keyword (the actual identifier) would have found. Fixed by scoring every
+// candidate line by the combined LENGTH of the keywords it matches (a
+// longer, rarer keyword like a specific identifier outweighs several
+// matches of a short, generic word) and keeping the highest-scoring lines,
+// not just the first ones encountered.
+const MAX_SCAN_MATCHES = 500; // safety cap on total candidates scored, not the final result size
+
 export async function searchRepo(keywords: string[]): Promise<string> {
   if (!keywords.length) return "No meaningful search keywords could be extracted from the question.";
-  const pattern = new RegExp(keywords.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "i");
-  const matches: string[] = [];
+  const escaped = keywords.map((k) => ({ length: k.length, re: new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi") }));
+
+  // Score = sum of the LENGTHS of every distinct keyword that matches this
+  // line — not just a count of how many matched. A line matching one long,
+  // specific keyword (an actual identifier) outscores several matches of a
+  // short, generic word; a line matching multiple keywords scores highest
+  // of all, since that's the strongest signal it's actually relevant.
+  function scoreLine(line: string): number {
+    let score = 0;
+    for (const { re, length } of escaped) {
+      re.lastIndex = 0;
+      if (re.test(line)) score += length;
+    }
+    return score;
+  }
+
+  const candidates: { line: string; score: number }[] = [];
 
   async function walk(dir: string) {
-    if (matches.length >= MAX_MATCHES) return;
+    if (candidates.length >= MAX_SCAN_MATCHES) return;
     let entries;
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
@@ -89,7 +118,7 @@ export async function searchRepo(keywords: string[]): Promise<string> {
       return; // directory doesn't exist in this environment — skip, don't crash
     }
     for (const entry of entries) {
-      if (matches.length >= MAX_MATCHES) return;
+      if (candidates.length >= MAX_SCAN_MATCHES) return;
       if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
       const full = path.join(dir, entry.name);
       // Excludes the Dev Assistant's OWN implementation — its comments are
@@ -104,9 +133,10 @@ export async function searchRepo(keywords: string[]): Promise<string> {
       } else if (SEARCHABLE_EXTENSIONS.has(path.extname(entry.name))) {
         const content = await fs.readFile(full, "utf-8").catch(() => "");
         const lines = content.split("\n");
-        for (let i = 0; i < lines.length && matches.length < MAX_MATCHES; i++) {
-          if (pattern.test(lines[i])) {
-            matches.push(`${path.relative(REPO_ROOT, full)}:${i + 1}: ${lines[i].trim().slice(0, 160)}`);
+        for (let i = 0; i < lines.length && candidates.length < MAX_SCAN_MATCHES; i++) {
+          const score = scoreLine(lines[i]);
+          if (score > 0) {
+            candidates.push({ line: `${path.relative(REPO_ROOT, full)}:${i + 1}: ${lines[i].trim().slice(0, 160)}`, score });
           }
         }
       }
@@ -115,7 +145,12 @@ export async function searchRepo(keywords: string[]): Promise<string> {
 
   for (const dir of SEARCHABLE_DIRS) await walk(path.join(REPO_ROOT, dir));
 
-  return matches.length ? matches.join("\n") : `No matches for [${keywords.join(", ")}] in backend/src or frontend/src.`;
+  const top = candidates
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_MATCHES)
+    .map((c) => c.line);
+
+  return top.length ? top.join("\n") : `No matches for [${keywords.join(", ")}] in backend/src or frontend/src.`;
 }
 
 // --- Git history: best-effort. A deployed backend image typically ships
@@ -158,7 +193,20 @@ export function searchRecentLogs(keywords: string[]): string {
 // to the CODEBASE — it doesn't write anything, doesn't apply a fix, and its
 // own in-memory MongoDB is thrown away when the run ends. Capped with a
 // generous timeout since a full run (unit + integration) takes ~10-15s. ---
-export async function runTestSuite(): Promise<string> {
+interface TestRunResult {
+  passed: boolean;
+  summary: string;
+}
+
+// The shared implementation — `npm test` exits non-zero (execFile throws)
+// exactly when Vitest found a failure, which is the real, authoritative
+// pass/fail signal (not string-matching "FAIL" in the output, which could
+// theoretically appear in a passing run's incidental text). Two exported
+// wrappers over this: `runTestSuite()` returns just the summary string (the
+// Test Agent's existing shape, used for investigation); `runTestSuiteVerbose()`
+// returns the structured `{ passed, summary }` the apply-fix flow needs to
+// actually decide keep-vs-revert on.
+async function runTestSuiteInternal(): Promise<TestRunResult> {
   try {
     const { stdout, stderr } = await execFileAsync("npm", ["test"], {
       cwd: path.join(REPO_ROOT, "backend"),
@@ -167,20 +215,26 @@ export async function runTestSuite(): Promise<string> {
     });
     const output = stdout + stderr;
     const summaryLine = output.split("\n").find((l) => /Tests\s+\d+/.test(l)) ?? "";
-    const failures = output
-      .split("\n")
-      .filter((l) => l.includes("FAIL") || l.trim().startsWith("×"))
-      .slice(0, 10);
-    return [summaryLine.trim(), ...failures].filter(Boolean).join("\n") || "Tests ran; no summary line parsed.";
+    return { passed: true, summary: summaryLine.trim() || "Tests passed; no summary line parsed." };
   } catch (err) {
-    // npm test exits non-zero on failure — execFile throws, but stdout on
-    // the error object still has the real test output we want to surface.
     const stdout = (err as { stdout?: string }).stdout ?? "";
     const summaryLine = stdout.split("\n").find((l) => /Tests\s+\d+/.test(l)) ?? "";
     const failures = stdout
       .split("\n")
       .filter((l) => l.includes("FAIL") || l.trim().startsWith("×"))
       .slice(0, 10);
-    return [summaryLine.trim(), ...failures].filter(Boolean).join("\n") || `Test run failed to complete: ${(err as Error).message}`;
+    return {
+      passed: false,
+      summary: [summaryLine.trim(), ...failures].filter(Boolean).join("\n") || `Test run failed to complete: ${(err as Error).message}`,
+    };
   }
+}
+
+export async function runTestSuite(): Promise<string> {
+  const { summary } = await runTestSuiteInternal();
+  return summary;
+}
+
+export async function runTestSuiteVerbose(): Promise<TestRunResult> {
+  return runTestSuiteInternal();
 }

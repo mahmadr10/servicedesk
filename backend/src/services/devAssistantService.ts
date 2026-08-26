@@ -6,6 +6,7 @@ import { logAction } from "./auditLogService";
 import { runDevAssistantGraph } from "../ai/devAssistant/orchestratorGraph";
 import { runDevAssistantMock } from "../ai/devAssistant/mockOrchestrator";
 import type { OnStep } from "../ai/devAssistant/orchestratorGraph";
+import { applyFix, ApplyFixInput } from "../ai/devAssistant/applyFix";
 
 // The AI Dev Assistant — same replaceable-abstraction shape as
 // aiService.analyzeTicket(): one function, real-vs-mock decided here, real
@@ -47,5 +48,29 @@ export async function askDevAssistant(question: string, actor: { userId: string 
     });
 
     return { ...result, source };
+  });
+}
+
+// The ONE gated write path — reached only after a human has seen the
+// suggested diff and explicitly clicked "Apply" (there is no automatic
+// call path into this from askDevAssistant above). applyFix.ts does the
+// actual safety work (path validation, exact-match validation, apply,
+// test, auto-revert-on-failure); this function's job is authorization,
+// tracing, and the audit trail.
+export async function applyDevAssistantFix(input: ApplyFixInput, actor: { userId: string }) {
+  return withSpan("devAssistantService.applyDevAssistantFix", async () => {
+    const result = await applyFix(input);
+
+    await logAction({
+      actor: actor.userId,
+      action: result.applied ? "DEV_ASSISTANT_FIX_APPLIED" : "DEV_ASSISTANT_FIX_REVERTED_TESTS_FAILED",
+      entity: "System",
+      entityId: actor.userId,
+      oldValue: input.oldCode,
+      newValue: input.newCode,
+      metadata: { targetFile: input.targetFile, testsPassed: result.testsPassed },
+    });
+
+    return result;
   });
 }

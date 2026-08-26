@@ -575,3 +575,102 @@ shows real messages ("Resolution SLA breached: TCK-000001 — 'Payment API
 returns HTTP 500 on checkout'") with real timestamps, and the ticket queue
 itself shows the same tickets in red ("overdue by 29:08:27") — two
 independent parts of the UI agreeing with each other and with reality.
+
+---
+
+## AI Dev Assistant: patch generation, human-gated apply, auto-test-verify
+
+**Problem**: the Dev Assistant (investigate-only, above) was explicitly
+extended to propose and — with an explicit human approval step — actually
+apply a real code fix, weighed directly against the brief's own stated
+principle ("AI can recommend and automate; humans retain control over
+high-impact actions"). Full autonomous apply (an LLM generating AND
+applying a patch with no human step) was rejected outright as contradicting
+that principle for no real benefit; the brief's own suggested shape —
+`Diagnosis → Suggested Fix → Human Approval → Code Change → Tests` — is
+exactly what got built.
+
+**Approach**: a new `suggestFix` graph node (after `diagnosisAgent`) reads
+the single file the repo agent's evidence points at and proposes a
+specific `{ targetFile, oldCode, newCode, explanation }` — but ONLY
+declares `fixAvailable: true` after independently verifying `oldCode` is a
+real, exact substring of the file's actual current content (never trusting
+the model's own claim that it copied correctly). Applying a suggestion is
+a SEPARATE code path (`ai/devAssistant/applyFix.ts`) the graph has no way
+to reach on its own: path-validated (inside `backend/src`/`frontend/src`
+only, never the Dev Assistant's own code), exact-match-validated again
+independently (0 or 2+ occurrences both rejected), applied, immediately
+re-verified by running the REAL test suite, and automatically reverted if
+that fails — before the HTTP response is even returned.
+
+**Implementation**: `ai/devAssistant/applyFix.ts` (the one write path —
+see its own header comment for the full safety reasoning), a
+`suggestFix` node + `SuggestedFix` state field in `orchestratorGraph.ts`,
+`runTestSuiteVerbose()` added to `tools.ts` (the existing `runTestSuite()`
+returns a string summary for the investigation path; this returns a real
+`{ passed: boolean, summary }` the apply flow can actually branch on — exit
+code, not string-matching "FAIL" in output, is what decides `passed`), a
+new `POST /admin/dev-assistant/apply-fix` endpoint, and a "Suggested Fix"
+panel (a red/green diff view, an "Apply Fix" button, and a live
+applying-and-testing result) on the Dev Assistant page.
+
+**Verification approach, deliberately**: before wiring this to the LLM or
+the HTTP layer at all, `applyFix()` was tested in complete isolation
+against a disposable scratch file created specifically for this (never
+real application code) — path traversal, wrong extension, self-
+modification, no-match, and a genuinely-breaking change (which correctly
+triggered the auto-revert, confirmed by re-reading the file afterward and
+seeing it back to original) were all exercised directly before this code
+ever touched anything that mattered. Only once that mechanism was proven
+safe on its own was it connected to the LLM-generated suggestion, and only
+after THAT was it driven through the real browser UI's "Apply Fix" button.
+
+**Challenges — three more real bugs, all found by that same "verify live,
+not just unit-test" discipline**:
+
+1. A question like "where is authentication implemented" initially
+   produced `fixAvailable: false` — correctly, since that's a navigation
+   question with nothing to fix. But testing a genuine PLANTED bug (a
+   scratch function computing tax subtraction instead of addition) also
+   came back with no fix suggested, which was wrong. Root cause: the repo
+   search results were dominated by generic words the question also
+   happened to contain ("function", "expected") — common enough to fill the
+   15-result cap with noise from files earlier in the directory walk order,
+   before ever reaching the file the SPECIFIC identifier
+   (`addTaxToPrice`/`scratchBuggyMath`) would have found. Fixed by scoring
+   every candidate line by the summed LENGTH of the keywords it matches
+   (a long, specific identifier outweighs several matches of a short,
+   generic word) and keeping the highest-scoring results, not the
+   first-encountered ones.
+2. Even after that fix, `suggestFix` still picked the WRONG target file.
+   `mostReferencedFile()` counted which file appeared most OFTEN across
+   the findings — but a file matching one common word five separate times
+   (five unrelated `function` declarations) still outranked the actually-
+   relevant file matching the specific identifier exactly once. Root cause:
+   `searchRepo`'s results were already sorted by relevance (fix #1, above)
+   — counting raw occurrences instead of trusting that order threw the
+   ranking away again, one function up the call stack. Fixed to simply use
+   the file the FIRST (highest-scored) line belongs to.
+3. `runTestSuite()`'s original pass/fail signal was string-matching "FAIL"
+   in Vitest's output — good enough for a human-readable investigation
+   summary, not reliable enough to gate an automatic file revert on. Added
+   `runTestSuiteVerbose()`, which uses `npm test`'s actual exit code
+   (whether `execFile` threw) as the real, unambiguous signal.
+
+**Testing**: `applyFix.test.ts` — every REJECTION path (path traversal,
+wrong extension, self-modification, no-match, ambiguous-match, empty
+input) runs in the automated suite, fast, because each one throws before
+ever reaching the nested `npm test` call. The successful-apply-then-verify
+and applies-then-auto-reverts-on-failure paths were deliberately verified
+LIVE instead of automated here (a nested `npm test` inside this already-
+running suite would work, but at ~10-15s per assertion for marginal
+benefit over what live verification already proved) — see BUILD_LOG entries
+above for the pattern this project generally follows on that trade-off.
+
+**Result**: a real, planted bug (a discount calculation that added instead
+of subtracted) was correctly diagnosed, a fix was correctly generated with
+`oldCode` matching the live file exactly, applied through the ACTUAL
+browser UI's "Apply Fix" button (not a backend-only test), the real
+44-test suite ran and passed, and the file was genuinely corrected on
+disk — with a matching `DEV_ASSISTANT_FIX_APPLIED` audit log entry
+recording the real old/new code and which admin approved it.

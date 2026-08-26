@@ -129,13 +129,34 @@ being explicit about:
 Beyond AI Assist's data-handling notes above, this is an internal
 developer/admin tool with its own specific hardening:
 
-- **Admin-only** — the route requires `requireRole("ADMIN")`, same as every
-  other `/admin/*` endpoint. Agents and customers cannot reach it.
-- **Structurally read-only** — there is no write/edit/apply tool defined in
-  `ai/devAssistant/tools.ts` for the LLM to call. This is enforced by what
-  functions exist in the code, not by a prompt telling the model not to
-  write files — no prompt injection via a cleverly-worded question can grant
-  a capability that was never wired in.
+- **Admin-only** — every route below requires `requireRole("ADMIN")`, same
+  as every other `/admin/*` endpoint. Agents and customers cannot reach any
+  of this.
+- **The investigation graph is structurally read-only** — there is no
+  write/edit/apply tool defined in `ai/devAssistant/tools.ts` for the LLM
+  to call, and nothing inside the graph (`plan`, the four agents,
+  `diagnosisAgent`, `suggestFix`) can reach the one code path that DOES
+  write (below) on its own. This is enforced by what functions the graph
+  can call, not by a prompt telling the model not to write files — no
+  prompt injection via a cleverly-worded question can grant a capability
+  that was never wired in.
+- **The one write path (`POST /admin/dev-assistant/apply-fix`) is gated
+  and defended in depth**, not just admin-authenticated:
+  - Only reachable from a suggestion the graph already produced and a human
+    reviewed in the UI — never called automatically.
+  - `targetFile` must resolve (after normalizing `..`/`.` segments) inside
+    `backend/src` or `frontend/src`, must be `.ts`/`.tsx`, and cannot be
+    inside `ai/devAssistant/` itself (self-modification refused) — checked
+    server-side regardless of what the client sends.
+  - `oldCode` must match the file's CURRENT content exactly once — zero
+    matches (stale suggestion) or multiple matches (ambiguous) are both
+    rejected outright rather than guessed at.
+  - A change covering most of the file is refused (`FIX_TOO_BROAD`) rather
+    than applied.
+  - The real test suite runs immediately after every apply; a failure
+    triggers an automatic revert to the original file content before the
+    response is even returned — an approved-but-wrong fix cannot persist
+    unnoticed.
 - **Its own tighter rate limit** (`devAssistantLimiter`, 10 requests /
   15 min) — separate from the general API limiter, because a single question
   can trigger multiple LLM calls and a real ~10-15s test suite run, making

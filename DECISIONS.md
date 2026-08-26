@@ -182,32 +182,45 @@ specifically because the brief asked for something "agentic like
 LangGraph" by name — a deliberate choice to demonstrate the tool, not the
 only reasonable engineering call in isolation.
 
-## 9. AI Dev Assistant: investigate-and-recommend only, never a write/patch tool
+## 9. AI Dev Assistant: the investigation graph never writes; applying a fix is a separate, gated, auto-verified path
 
-**Alternatives considered**: giving the graph a tool to generate and apply a
-code patch directly (the brief's own "AI Engineering Assistant" challenge
-mentions "optionally generate a patch" as a possible step); an "approve
-before applying" UI flow where the LLM drafts a diff and a human clicks
-"apply."
+**Alternatives considered**: a graph tool that generates AND applies a
+patch directly, no human step (rejected — see below); staying
+investigate-and-recommend-only forever, with no code-writing capability at
+all (the original scope for this feature, before code-fixing capability was
+explicitly requested).
 
-**Why investigate-only**: the brief itself states the governing principle
-directly — "Do not allow the agent to automatically deploy production
-changes... AI can recommend and automate; humans retain control over
-high-impact actions." Applied literally: there is no write/edit/apply tool
-defined anywhere in `ai/devAssistant/tools.ts` for the graph to call. This
-is a structural boundary, not a prompt instruction ("please don't edit
-files") that a sufficiently creative question could talk an LLM out of —
-the capability to write to disk simply isn't wired into this feature's tool
-set, so no prompt injection or model misbehavior can make it happen.
+**Why the graph itself still never writes**: the brief states the
+governing principle directly — "Do not allow the agent to automatically
+deploy production changes... AI can recommend and automate; humans retain
+control over high-impact actions." Applied literally: there is no
+write/edit/apply tool defined anywhere in `ai/devAssistant/tools.ts` for
+the GRAPH to call — a structural boundary, not a prompt instruction a
+sufficiently creative question could talk an LLM out of. This part of the
+design never changed.
 
-**Why not even the "draft a diff, human approves" middle ground**: real
-engineering effort (safely generating a patch, showing a diff view,
-handling partial/invalid patches, an apply-then-test-then-rollback flow) for
-a feature that's explicitly a bonus on top of a bonus. The investigate-and-
-recommend version demonstrates the interesting part — genuine multi-agent
-orchestration, dynamic planning, tool use, live progress — without taking
-on the real risk and real complexity of an agent that touches source files,
-for a feature scored as a bonus, not core functionality.
+**Why a gated apply path was added on top**: real code-fixing capability
+was explicitly wanted, weighed against the brief's own safety principle
+directly — full autonomous apply (a graph tool that both generates AND
+applies a patch, no human step) was rejected outright as contradicting that
+principle for no real benefit. The brief's own "AI Engineering Assistant"
+sketch already names the answer: `Diagnosis → Suggested Fix → Human
+Approval → Code Change → Tests`. Built exactly that: `suggestFix` (a graph
+node) proposes a patch; applying it is a SEPARATE, human-triggered HTTP
+call (`applyFix.ts`) the graph has no path to reach on its own, which then
+immediately re-runs the real test suite and auto-reverts on failure. Real
+code-fixing capability, with the approval gate and the safety principle
+both intact — not a compromise between them.
+
+**Trade-off**: `applyFix.ts` is a genuinely more complex and higher-stakes
+piece of code than anything else in this feature — path validation,
+exact-match validation, a write, then a real test run, then a possible
+revert. Tested accordingly: isolated safety-rejection tests run in this
+repo's own suite (fast, no nested test run), while the full
+apply-then-verify-then-possibly-revert cycle was verified live against
+disposable scratch files and a real Groq-generated fix, specifically NOT
+against real application source, before ever being pointed at anything
+that mattered (see [BUILD_LOG.md](BUILD_LOG.md)).
 
 **Trade-off**: a user has to manually apply whatever the Diagnosis step
 recommends — this tool answers "what's probably wrong and what should you
