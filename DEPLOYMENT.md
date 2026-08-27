@@ -79,38 +79,65 @@ why, and what adding one would look like.
 ## Deploying live
 
 This step needs accounts on a hosting platform, which only the project
-owner can create — not something that can be done from inside this build
-session. What's already in place to make it a short process:
+owner can create. The chosen split: **Render** for the backend, **Vercel**
+for the frontend — Render because it builds directly from
+`backend/Dockerfile` and keeps a persistent Node process alive (required
+for Socket.IO — a serverless platform like plain Vercel functions can't
+hold a WebSocket connection open), Vercel because it's purpose-built for a
+static Vite/React build with zero configuration.
 
-**Backend** (needs a Node process + your `MONGODB_URI`): any of
-[Render](https://render.com), [Railway](https://railway.app), or
-[Fly.io](https://fly.io) can build directly from `backend/Dockerfile` —
-point them at this repo, set the environment variables from the table
-above, and they build the image and run it. No local Docker needed on your
-end; the platform builds it in the cloud from the same Dockerfile. There's
-no bundled Jaeger on a platform like this (that's a `docker-compose.yml`
-convenience for local dev) — leave `OTEL_EXPORTER_OTLP_ENDPOINT` unset and
-traces print to the platform's own log stream instead, or point it at a
-real hosted OTel backend (Grafana Cloud, Honeycomb, etc.) if you have one.
+### Backend on Render
 
-**Frontend**: two options —
-1. **Static hosting** (Vercel/Netlify/Cloudflare Pages): point at
-   `frontend/`, build command `npm run build`, output directory `dist`,
-   set `VITE_API_URL`/`VITE_SOCKET_URL` as build-time env vars to your
-   deployed backend's URL.
-2. **Same container platform as the backend**, building from
-   `frontend/Dockerfile` (which already serves via nginx) — simpler to keep
-   both halves on one platform, at the cost of nginx's minor overhead vs. a
-   dedicated static host's CDN.
+A `render.yaml` Blueprint at the repo root does most of this for you:
 
-**After deploying**, update:
-- Backend's `FRONTEND_ORIGIN` → the deployed frontend's real URL (CORS
-  will otherwise block it).
-- Frontend's `VITE_API_URL`/`VITE_SOCKET_URL` → the deployed backend's real
-  URL, and rebuild (build-time, not runtime — see above).
-- MongoDB Atlas Network Access → restrict from `0.0.0.0/0` to the actual
-  deploying platform's IP range if it publishes one, for real production
-  use.
+1. [render.com](https://render.com) → sign up/log in (GitHub login is
+   easiest, since the next step needs repo access anyway).
+2. **New +** → **Blueprint** → connect the `mahmadr10/servicedesk` GitHub
+   repo → Render reads `render.yaml` and shows the one service it defines
+   (`servicedesk-backend`, building from `backend/Dockerfile`).
+3. It'll prompt for the env vars marked `sync: false` in that file:
+   - `MONGODB_URI` — your Atlas connection string (see setup above)
+   - `JWT_ACCESS_SECRET` — a long random string (generate a new one, don't
+     reuse the local dev value)
+   - `FRONTEND_ORIGIN` — leave blank for now, come back and set it once
+     Vercel gives you a URL (step below)
+   - `GROQ_API_KEY` — optional; omit it and the AI features run their mock
+     fallback in production instead
+4. **Apply** — Render builds the Docker image and deploys it. Takes a few
+   minutes on the free tier's first build. You'll get a URL like
+   `https://servicedesk-backend-xxxx.onrender.com`.
+5. Confirm it's alive: `https://<that-url>/api/health` should return
+   `{"success":true,...}`.
+
+There's no bundled Jaeger on Render (that's a `docker-compose.yml`
+convenience for local dev) — traces print to Render's own log stream
+instead, or point `OTEL_EXPORTER_OTLP_ENDPOINT` at a real hosted OTel
+backend (Grafana Cloud, Honeycomb, etc.) if you have one.
+
+### Frontend on Vercel
+
+1. [vercel.com](https://vercel.com) → sign up/log in with GitHub.
+2. **Add New** → **Project** → import the same `mahmadr10/servicedesk` repo.
+3. **Root Directory** → set to `frontend` (Vercel needs to know this isn't
+   a single-project repo).
+4. Framework preset should auto-detect **Vite**. Build command
+   `npm run build`, output directory `dist` (Vercel usually fills these in
+   automatically once it detects Vite).
+5. **Environment Variables** → add, using the Render URL from above:
+   - `VITE_API_URL` = `https://<your-render-url>/api/v1`
+   - `VITE_SOCKET_URL` = `https://<your-render-url>` (no `/api/v1` suffix)
+6. **Deploy**. You'll get a URL like `https://servicedesk-xxxx.vercel.app`.
+
+### Close the loop
+
+Go back to Render → the backend service → Environment → set
+`FRONTEND_ORIGIN` to the real Vercel URL from step 6 above → save (Render
+redeploys automatically on an env var change). Without this, CORS blocks
+every request from the deployed frontend to the deployed backend.
+
+Also, for real production use: MongoDB Atlas → Network Access → restrict
+from `0.0.0.0/0` to Render's actual outbound IP range (Render publishes
+this) instead of leaving it open to anywhere.
 
 **Adding actual CD**: a `deploy` job in `ci.yml`, gated on
 `push: branches: [main]` and the existing jobs passing, that calls the
