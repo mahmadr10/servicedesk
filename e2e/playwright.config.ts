@@ -17,6 +17,14 @@ export default defineConfig({
   fullyParallel: false, // the flow tests share ticket state across steps — parallel workers would race each other
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "html",
+  // Default per-test timeout (30s) is tuned for FULL SPEED runs — with
+  // SLOWMO on, a single test's handful of actions (register() alone does
+  // 6: goto, 3 fills, a select, a click) can burn through 30s of pure
+  // artificial delay before the page even finishes loading, failing the
+  // test on a timeout that has nothing to do with the app actually working
+  // (hit this for real — see BUILD_LOG.md). Generous 5-minute budget
+  // whenever SLOWMO is set; untouched (30s) otherwise.
+  timeout: process.env.SLOWMO ? 300_000 : 30_000,
   use: {
     baseURL: "http://localhost:5175",
     trace: "retain-on-failure",

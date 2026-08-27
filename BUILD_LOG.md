@@ -674,3 +674,39 @@ browser UI's "Apply Fix" button (not a backend-only test), the real
 44-test suite ran and passed, and the file was genuinely corrected on
 disk — with a matching `DEV_ASSISTANT_FIX_APPLIED` audit log entry
 recording the real old/new code and which admin approved it.
+
+---
+
+## E2E demo mode: SLOWMO, and the timeout bug it exposed
+
+**Problem**: `npx playwright test --headed` finishes the whole 4-test
+ticket-lifecycle flow in ~25 seconds — too fast for a human to narrate
+over while presenting it live.
+
+**Approach**: `SLOWMO=<ms>` (an env var, opt-in — unset runs at normal
+speed) adds a pause of that many milliseconds before every single
+Playwright action (click, fill, goto, select), via Playwright's own
+`launchOptions.slowMo`. `SLOWMO=5000` makes each step clearly visible and
+narratable.
+
+**Challenge — a real bug this surfaced**: `SLOWMO=5000` immediately failed
+the very first test with `Test timeout of 30000ms exceeded` and
+`Expected: "http://localhost:5175/", Received: ""` — LOOKING like a real
+app bug (navigation never completing), but it wasn't. The `register()`
+helper alone performs 6 slowMo-affected actions (a `goto`, three `fill`s, a
+`selectOption`, a `click`) — at 5s each, that's 30 seconds of pure
+artificial delay, which alone equals Playwright's default 30s PER-TEST
+timeout, before the actual page navigation even has a chance to complete.
+The timeout fired on the slowMo delay itself, not on anything actually
+being broken. Fixed by scaling the per-test timeout to 5 minutes whenever
+`SLOWMO` is set (untouched at 30s otherwise, including in CI, which never
+sets `SLOWMO`).
+
+**Testing**: verified by actually running `SLOWMO=5000 npx playwright test
+--headed` end to end after the fix, not just reasoning about the math.
+
+**Result**: a demo-friendly, narratable automated run — the whole ticket
+lifecycle (customer creates a ticket → agent triages/assigns/resolves it →
+customer closes it → an illegal transition correctly rejected), driven
+entirely by the browser itself, paced for a human audience instead of
+finishing before anyone could explain what just happened.
