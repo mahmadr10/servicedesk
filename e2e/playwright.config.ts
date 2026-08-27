@@ -21,14 +21,15 @@ export default defineConfig({
     baseURL: "http://localhost:5175",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
-    // Demo mode: `SLOWMO=800 npx playwright test --headed` adds a pause (in
-    // ms) between every single Playwright action — a click, a fill, a
-    // navigation — so a human watching (e.g. presenting to a reviewer) can
-    // actually follow what's happening and narrate over it, instead of the
-    // whole 4-test flow finishing in under a minute. Unset (the normal/CI
-    // case) runs at full speed, no pause.
+    // Demo mode: adds a pause (in ms) between every single Playwright
+    // action — a click, a fill, a navigation — so a human watching (e.g.
+    // presenting to a reviewer) can actually follow what's happening and
+    // narrate over it, instead of the whole 4-test flow finishing in under
+    // a minute. Defaults to 5s, override with `SLOWMO=<ms>`, or `SLOWMO=0`
+    // for full speed. Always off in CI regardless (process.env.CI) — a
+    // real CI run should never be artificially slowed down.
     launchOptions: {
-      slowMo: process.env.SLOWMO ? Number(process.env.SLOWMO) : undefined,
+      slowMo: process.env.CI ? undefined : Number(process.env.SLOWMO ?? 5000),
     },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
