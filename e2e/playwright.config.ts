@@ -21,6 +21,15 @@ export default defineConfig({
     baseURL: "http://localhost:5175",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
+    // Demo mode: `SLOWMO=800 npx playwright test --headed` adds a pause (in
+    // ms) between every single Playwright action — a click, a fill, a
+    // navigation — so a human watching (e.g. presenting to a reviewer) can
+    // actually follow what's happening and narrate over it, instead of the
+    // whole 4-test flow finishing in under a minute. Unset (the normal/CI
+    // case) runs at full speed, no pause.
+    launchOptions: {
+      slowMo: process.env.SLOWMO ? Number(process.env.SLOWMO) : undefined,
+    },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 
@@ -28,14 +37,18 @@ export default defineConfig({
     {
       command: "node scripts/startBackendForE2E.cjs",
       url: "http://localhost:4001/api/health",
-      timeout: 60_000,
+      // 90s, not 60s — mongodb-memory-server's cold start (first launch
+      // after a while, antivirus scanning the cached mongod binary, etc.)
+      // has been observed taking longer than 60s on this machine; 60s was
+      // cutting it close enough to occasionally time out for no real reason.
+      timeout: 90_000,
       reuseExistingServer: false,
     },
     {
       command: "npm run dev -- --port 5175 --strictPort",
       cwd: "../frontend",
       url: "http://localhost:5175",
-      timeout: 30_000,
+      timeout: 60_000,
       reuseExistingServer: false,
       env: {
         VITE_API_URL: "http://localhost:4001/api/v1",
